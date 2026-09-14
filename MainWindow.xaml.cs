@@ -26,12 +26,15 @@ public partial class MainWindow : Window
     private bool _restoreWindowState;
     private bool _changingLayoutWindowState;
     private bool _resultsContextMenuActive;
+    private GridLength _savedSearchControlsHeight = new(260);
+    private GridLength _savedResultsHeight = new(1, GridUnitType.Star);
     private readonly DependencyPropertyDescriptor _windowStateDescriptor =
         DependencyPropertyDescriptor.FromProperty(WindowStateProperty, typeof(Window));
 
     public MainWindow()
     {
         InitializeComponent();
+        Title = "LumaSearch " + typeof(App).Assembly.GetName().Version?.ToString(3);
         ResultsGrid.ItemsSource = _results;
         DirectoryTextBox.Text = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         UpdateNameHint();
@@ -308,6 +311,13 @@ public partial class MainWindow : Window
         _resultsExpanded = !_resultsExpanded;
         if (_resultsExpanded)
         {
+            _savedSearchControlsHeight = SearchControlsRow.Height;
+            _savedResultsHeight = ResultsRegionRow.Height;
+            SearchControlsRow.MinHeight = 0;
+            SearchControlsRow.Height = new GridLength(0);
+            ResultsRegionRow.Height = new GridLength(1, GridUnitType.Star);
+            SearchControlsScroll.Visibility = Visibility.Collapsed;
+            ResultsSplitter.Visibility = Visibility.Collapsed;
             _previousWindowState = WindowState;
             _restoreWindowState = WindowState != WindowState.Maximized;
             HeaderPanel.Visibility = Visibility.Collapsed;
@@ -318,6 +328,11 @@ public partial class MainWindow : Window
         }
         else
         {
+            SearchControlsRow.MinHeight = 60;
+            SearchControlsRow.Height = _savedSearchControlsHeight;
+            ResultsRegionRow.Height = _savedResultsHeight;
+            SearchControlsScroll.Visibility = Visibility.Visible;
+            ResultsSplitter.Visibility = Visibility.Visible;
             HeaderPanel.Visibility = Visibility.Visible;
             SearchOptionsCard.Visibility = Visibility.Visible;
             RestoreLayoutButton.Visibility = Visibility.Collapsed;
@@ -326,6 +341,25 @@ public partial class MainWindow : Window
             _restoreWindowState = false;
         }
         // Reuse the same grid and bound collection, preserving results, selection and search inputs.
+        UpdateResizeLimits();
+    }
+    private void ResizeLayout_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateResizeLimits();
+    private void UpdateResizeLimits()
+    {
+        if (_resultsExpanded || MainLayout is null || HeaderPanel is null || FooterPanel is null || MainLayout.ActualHeight <= 0) return;
+        SearchControlsRow.MaxHeight = Math.Max(60, MainLayout.ActualHeight - HeaderPanel.ActualHeight - HeaderPanel.Margin.Top - HeaderPanel.Margin.Bottom
+            - FooterPanel.ActualHeight - FooterPanel.Margin.Top - FooterPanel.Margin.Bottom - 27 - ResultsRegionRow.MinHeight);
+    }
+    private void ResetResultsSizes_Click(object sender, RoutedEventArgs e)
+    {
+        if (_closed) return;
+        if (_resultsExpanded) ToggleResultsLayout_Click(sender, e);
+        SearchControlsRow.Height = new GridLength(260);
+        ResultsRegionRow.Height = new GridLength(1, GridUnitType.Star);
+        ResultsGrid.Columns[0].Width = new DataGridLength(240);
+        ResultsGrid.Columns[1].Width = new DataGridLength(90);
+        ResultsGrid.Columns[2].Width = new DataGridLength(1, DataGridLengthUnitType.Star);
+        UpdateResizeLimits();
     }
     private void SetLayoutWindowState(WindowState state)
     {

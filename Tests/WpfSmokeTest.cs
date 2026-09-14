@@ -2,6 +2,7 @@ using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -86,6 +87,47 @@ internal static class WpfSmokeTest
         content.UpdateLayout();
         if (grid.Columns[0].ActualWidth < 239 || grid.Columns[1].ActualWidth < 89)
             throw new InvalidOperationException("Result columns did not reach their configured widths.");
+        void RefreshLayout()
+        {
+            content.Measure(new Size(1120, 720));
+            content.Arrange(new Rect(0, 0, 1120, 720));
+            content.UpdateLayout();
+        }
+        IEnumerable<T> VisualChildren<T>(DependencyObject parent) where T : DependencyObject
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T match) yield return match;
+                foreach (var nested in VisualChildren<T>(child)) yield return nested;
+            }
+        }
+        var splitter = (GridSplitter)window.FindName("ResultsSplitter");
+        var topRow = (RowDefinition)window.FindName("SearchControlsRow");
+        double heightBeforeDrag = grid.ActualHeight;
+        double topBeforeDrag = topRow.ActualHeight;
+        object sourceBeforeDrag = grid.ItemsSource;
+        splitter.RaiseEvent(new DragStartedEventArgs(0, 0));
+        splitter.RaiseEvent(new DragDeltaEventArgs(0, -60));
+        splitter.RaiseEvent(new DragCompletedEventArgs(0, -60, false));
+        RefreshLayout();
+        if (grid.ActualHeight < heightBeforeDrag + 40 || topRow.ActualHeight > topBeforeDrag - 40 || grid.ItemsSource != sourceBeforeDrag)
+            throw new InvalidOperationException("Dragging the divider did not enlarge the results area.");
+        var nameHeader = VisualChildren<DataGridColumnHeader>(grid).First(header => header.Column == grid.Columns[0]);
+        nameHeader.ApplyTemplate();
+        var gripper = (Thumb)nameHeader.Template.FindName("PART_RightHeaderGripper", nameHeader);
+        double widthBeforeDrag = grid.Columns[0].ActualWidth;
+        gripper.RaiseEvent(new DragStartedEventArgs(0, 0));
+        gripper.RaiseEvent(new DragDeltaEventArgs(80, 0));
+        gripper.RaiseEvent(new DragCompletedEventArgs(80, 0, false));
+        RefreshLayout();
+        if (grid.Columns[0].ActualWidth < widthBeforeDrag + 60)
+            throw new InvalidOperationException("Dragging the column edge did not widen the column.");
+        var resetSizes = (MenuItem)window.FindName("ResetResultsSizesMenuItem");
+        resetSizes.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        RefreshLayout();
+        if (Math.Abs(grid.Columns[0].ActualWidth - 240) > 1 || topRow.Height.Value != 260)
+            throw new InvalidOperationException("Reset sizes did not restore the panel and column dimensions.");
         var expand = (MenuItem)window.FindName("ExpandResultsMenuItem");
         var restore = (Button)window.FindName("RestoreLayoutButton");
         var optionsCard = (Border)window.FindName("SearchOptionsCard");

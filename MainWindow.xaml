@@ -3,15 +3,15 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:LumaSearch"
         Title="LumaSearch" Width="1120" Height="760" MinWidth="800" MinHeight="580"
-        WindowStartupLocation="CenterScreen" Background="#F5F6FA" Foreground="#202940"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#F5F6FA" Foreground="#202940"
         FontFamily="Segoe UI" FontSize="14" Icon="Assets/LumaSearch.ico"
         Closing="Window_Closing">
-    <Grid Margin="28" Background="#F5F6FA">
+    <Grid x:Name="MainLayout" Margin="28" Background="#F5F6FA" SizeChanged="ResizeLayout_SizeChanged">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition x:Name="SearchControlsRow" Height="260" MinHeight="60" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition x:Name="ResultsRegionRow" Height="*" MinHeight="190" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <StackPanel x:Name="HeaderPanel" Orientation="Horizontal" Margin="0,0,0,22">
@@ -21,7 +21,8 @@
                 <TextBlock Text="Find files. Explore folders. Clear the clutter." Foreground="#66718A" />
             </StackPanel>
         </StackPanel>
-        <Border Grid.Row="1" x:Name="SearchOptionsCard" Background="White" BorderBrush="#E1E5EE" BorderThickness="1" CornerRadius="12" Padding="22">
+        <ScrollViewer Grid.Row="1" x:Name="SearchControlsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Border x:Name="SearchOptionsCard" Background="White" BorderBrush="#E1E5EE" BorderThickness="1" CornerRadius="12" Padding="22">
             <Grid x:Name="SearchOptionsPanel">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
@@ -59,7 +60,24 @@
                 </StackPanel>
             </Grid>
         </Border>
-        <Grid Grid.Row="2" Margin="0,18,0,14">
+        </ScrollViewer>
+        <GridSplitter Grid.Row="2" x:Name="ResultsSplitter" Height="22" Margin="0,5,0,0"
+                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Rows"
+                      ResizeBehavior="PreviousAndNext" ShowsPreview="False" Cursor="SizeNS" Focusable="True"
+                      KeyboardIncrement="20" DragIncrement="1" AutomationProperties.Name="Resize results area"
+                      ToolTip="Hold the left mouse button and drag up or down to resize the results area.">
+            <GridSplitter.Template>
+                <ControlTemplate TargetType="GridSplitter">
+                    <Border Background="#DFE3F0" CornerRadius="4">
+                        <TextBlock Text="↕  Drag here to stretch the results area" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" FontSize="12" Foreground="#4F46E5" />
+                    </Border>
+                </ControlTemplate>
+            </GridSplitter.Template>
+        </GridSplitter>
+        <Grid Grid.Row="3">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" MinHeight="70" /></Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="0,10,0,14">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Button x:Name="SearchButton" Content="Search" Width="120" Background="{StaticResource AccentBrush}" BorderBrush="{StaticResource AccentBrush}" Foreground="White" FontWeight="SemiBold" IsDefault="True" Click="Search_Click" />
@@ -79,7 +97,7 @@
                 </ComboBox>
             </StackPanel>
         </Grid>
-        <DataGrid Grid.Row="3" x:Name="ResultsGrid" AutoGenerateColumns="False" IsReadOnly="True"
+        <DataGrid Grid.Row="1" x:Name="ResultsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserResizeColumns="True"
                   CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" SelectionUnit="FullRow"
                   EnableRowVirtualization="True" EnableColumnVirtualization="True"
                   VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
@@ -92,23 +110,33 @@
             <DataGrid.ContextMenu>
                 <ContextMenu Opened="ResultsContextMenu_Opened" Closed="ResultsContextMenu_Closed">
                     <MenuItem x:Name="ExpandResultsMenuItem" Header="Expand results area" Click="ToggleResultsLayout_Click" />
+                    <MenuItem x:Name="ResetResultsSizesMenuItem" Header="Reset panel and column sizes" Click="ResetResultsSizes_Click" />
                     <Separator />
                     <MenuItem x:Name="ExplorerMenuItem" Header="Show in Explorer" Click="Explorer_Click" />
                     <Separator />
                     <MenuItem x:Name="DeleteMenuItem" Header="Delete Selected Item" Click="Delete_Click" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
+            <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Padding" Value="8,0" />
+                    <Setter Property="BorderBrush" Value="#BAC2D5" />
+                    <Setter Property="BorderThickness" Value="0,0,1,1" />
+                    <Setter Property="ToolTip" Value="Drag the right edge of this header to stretch the column." />
+                </Style>
+            </DataGrid.ColumnHeaderStyle>
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="240" MinWidth="100" />
-                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="90" />
-                <DataGridTextColumn Header="Full Path" Binding="{Binding FullPath}" Width="*" MinWidth="250">
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="240" MinWidth="100" CanUserResize="True" />
+                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="90" CanUserResize="True" />
+                <DataGridTextColumn Header="Full Path" Binding="{Binding FullPath}" Width="*" MinWidth="250" CanUserResize="True">
                     <DataGridTextColumn.ElementStyle>
                         <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding FullPath}" /><Setter Property="VerticalAlignment" Value="Center" /><Setter Property="Padding" Value="8,0" /></Style>
                     </DataGridTextColumn.ElementStyle>
                 </DataGridTextColumn>
             </DataGrid.Columns>
         </DataGrid>
-        <StackPanel Grid.Row="4" Margin="0,14,0,0">
+        </Grid>
+        <StackPanel Grid.Row="4" x:Name="FooterPanel" Margin="0,14,0,0" SizeChanged="ResizeLayout_SizeChanged">
             <TextBlock x:Name="SelectionTextBlock" Text="Select a result to see exactly what will be deleted."
                        TextWrapping="Wrap" Foreground="#25304A" Margin="0,0,0,10" />
             <ProgressBar x:Name="SearchProgress" Height="3" IsIndeterminate="False" Foreground="{StaticResource AccentBrush}" Background="#E1E5EE" />
