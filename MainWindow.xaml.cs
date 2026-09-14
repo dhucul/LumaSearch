@@ -21,6 +21,13 @@ public partial class MainWindow : Window
     private OperationState _state;
     private long _operationId;
     private bool _closed;
+    private bool _resultsExpanded;
+    private WindowState _previousWindowState;
+    private bool _restoreWindowState;
+    private bool _changingLayoutWindowState;
+    private bool _resultsContextMenuActive;
+    private readonly DependencyPropertyDescriptor _windowStateDescriptor =
+        DependencyPropertyDescriptor.FromProperty(WindowStateProperty, typeof(Window));
 
     public MainWindow()
     {
@@ -30,6 +37,7 @@ public partial class MainWindow : Window
         UpdateNameHint();
         UpdateControls();
         Loaded += Window_Loaded;
+        _windowStateDescriptor.AddValueChanged(this, WindowStatePropertyChanged);
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -175,7 +183,7 @@ public partial class MainWindow : Window
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
-        if (_state != OperationState.Idle || ResultsGrid.SelectedItem is not SearchResult item || item.Identity is null) return;
+        if (_state != OperationState.Idle || GetActionTarget(sender) is not SearchResult item || item.Identity is null) return;
         DeletionMode mode = SelectedDeletionMode;
         var (id, cancel) = BeginOperation(OperationState.PreparingDelete);
         Task<SearchResult?> validation = ReadOnlyWork.RunAsync(() => FileDeletionService.ValidateTarget(item), cancel.Token);
@@ -247,7 +255,7 @@ public partial class MainWindow : Window
 
     private async void Explorer_Click(object sender, RoutedEventArgs e)
     {
-        if (_state != OperationState.Idle || ResultsGrid.SelectedItem is not SearchResult item) return;
+        if (_state != OperationState.Idle || GetActionTarget(sender) is not SearchResult item) return;
         var (id, cancel) = BeginOperation(OperationState.OpeningExplorer);
         Task work = ReadOnlyWork.RunAsync(async () => { await ExplorerService.ShowAsync(item, cancel.Token); return true; }, cancel.Token);
         StatusTextBlock.Text = "Opening Explorer for: " + item.Name;
@@ -270,9 +278,11 @@ public partial class MainWindow : Window
         CancelButton.IsEnabled = busy && _state is not OperationState.Cancelling and not OperationState.Closing;
         bool selected = ResultsGrid.SelectedItem is SearchResult;
         ExplorerButton.IsEnabled = !busy && selected;
-        ExplorerMenuItem.IsEnabled = ExplorerButton.IsEnabled;
+        ExplorerMenuItem.IsEnabled = ExplorerButton.IsEnabled &&
+            (!_resultsContextMenuActive || ReferenceEquals(ExplorerMenuItem.Tag, ResultsGrid.SelectedItem));
         DeleteButton.IsEnabled = !busy && ResultsGrid.SelectedItem is SearchResult { Identity: not null };
-        DeleteMenuItem.IsEnabled = DeleteButton.IsEnabled;
+        DeleteMenuItem.IsEnabled = DeleteButton.IsEnabled &&
+            (!_resultsContextMenuActive || ReferenceEquals(DeleteMenuItem.Tag, ResultsGrid.SelectedItem));
         bool recycle = SelectedDeletionMode == DeletionMode.RecycleBin;
         string label = recycle ? "Send to Recycle Bin…" : "Delete Permanently…";
         if (ResultsGrid.SelectedItem is SearchResult item)
@@ -292,7 +302,65 @@ public partial class MainWindow : Window
     }
 
     private void ResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateControls();
+    private void ToggleResultsLayout_Click(object sender, RoutedEventArgs e)
+    {
+        if (_closed) return;
+        _resultsExpanded = !_resultsExpanded;
+        if (_resultsExpanded)
+        {
+            _previousWindowState = WindowState;
+            _restoreWindowState = WindowState != WindowState.Maximized;
+            HeaderPanel.Visibility = Visibility.Collapsed;
+            SearchOptionsCard.Visibility = Visibility.Collapsed;
+            RestoreLayoutButton.Visibility = Visibility.Visible;
+            ExpandResultsMenuItem.Header = "Restore normal layout";
+            if (_restoreWindowState) SetLayoutWindowState(WindowState.Maximized);
+        }
+        else
+        {
+            HeaderPanel.Visibility = Visibility.Visible;
+            SearchOptionsCard.Visibility = Visibility.Visible;
+            RestoreLayoutButton.Visibility = Visibility.Collapsed;
+            ExpandResultsMenuItem.Header = "Expand results area";
+            if (_restoreWindowState) SetLayoutWindowState(_previousWindowState);
+            _restoreWindowState = false;
+        }
+        // Reuse the same grid and bound collection, preserving results, selection and search inputs.
+    }
+    private void SetLayoutWindowState(WindowState state)
+    {
+        _changingLayoutWindowState = true;
+        try { WindowState = state; }
+        finally { _changingLayoutWindowState = false; }
+    }
+    private void WindowStatePropertyChanged(object? sender, EventArgs e)
+    {
+        if (_resultsExpanded && !_changingLayoutWindowState) _restoreWindowState = false;
+    }
+    private SearchResult? GetActionTarget(object sender)
+    {
+        if (sender is MenuItem menu)
+            return menu.Tag is SearchResult target && ReferenceEquals(target, ResultsGrid.SelectedItem) ? target : null;
+        return ResultsGrid.SelectedItem as SearchResult;
+    }
+    private void ResultsGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        SearchResult? target = e.CursorLeft < 0 && e.CursorTop < 0
+            ? ResultsGrid.SelectedItem as SearchResult
+            : e.OriginalSource is DependencyObject source &&
+                ItemsControl.ContainerFromElement(ResultsGrid, source) is DataGridRow row ? row.Item as SearchResult : null;
+        ExplorerMenuItem.Tag = target;
+        DeleteMenuItem.Tag = target;
+        _resultsContextMenuActive = true;
+        UpdateControls();
+    }
     private void ResultsContextMenu_Opened(object sender, RoutedEventArgs e) => UpdateControls();
+    private void ResultsContextMenu_Closed(object sender, RoutedEventArgs e)
+    {
+        _resultsContextMenuActive = false;
+        // Keep the command target until the next opening: WPF may close a menu before delivering Click.
+        UpdateControls();
+    }
     private void ResultsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Left || e.OriginalSource is not DependencyObject source ||
@@ -303,11 +371,12 @@ public partial class MainWindow : Window
     {
         if (e.OriginalSource is DependencyObject source && ItemsControl.ContainerFromElement(ResultsGrid, source) is DataGridRow row)
         { row.IsSelected = true; row.Focus(); }
-        else ResultsGrid.SelectedItem = null;
+        // Empty-space layout commands must preserve selection. Their item actions are disabled on opening.
     }
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         _closed = true;
+        _windowStateDescriptor.RemoveValueChanged(this, WindowStatePropertyChanged);
         _state = OperationState.Closing;
         ++_operationId;
         _operationCancellation?.Cancel();

@@ -1,6 +1,8 @@
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -84,6 +86,70 @@ internal static class WpfSmokeTest
         content.UpdateLayout();
         if (grid.Columns[0].ActualWidth < 239 || grid.Columns[1].ActualWidth < 89)
             throw new InvalidOperationException("Result columns did not reach their configured widths.");
+        var expand = (MenuItem)window.FindName("ExpandResultsMenuItem");
+        var restore = (Button)window.FindName("RestoreLayoutButton");
+        var optionsCard = (Border)window.FindName("SearchOptionsCard");
+        double normalHeight = grid.ActualHeight;
+        object originalSource = grid.ItemsSource;
+        grid.SelectedIndex = 0;
+        object originalSelection = grid.SelectedItem;
+        var deleteMenu = (MenuItem)window.FindName("DeleteMenuItem");
+        void OpenResultsMenu(UIElement source, bool keyboard = false)
+        {
+            if (!keyboard)
+                source.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
+                    { RoutedEvent = Mouse.PreviewMouseDownEvent });
+            // WPF exposes no public constructor; create its normal routed opening event for the real input handlers.
+            var opening = (ContextMenuEventArgs)Activator.CreateInstance(typeof(ContextMenuEventArgs),
+                BindingFlags.Instance | BindingFlags.NonPublic, null,
+                new object[] { source, true, keyboard ? -1d : 0d, keyboard ? -1d : 0d }, null)!;
+            source.RaiseEvent(opening);
+            grid.ContextMenu.RaiseEvent(new RoutedEventArgs(ContextMenu.OpenedEvent));
+        }
+        void CloseResultsMenu() => grid.ContextMenu.RaiseEvent(new RoutedEventArgs(ContextMenu.ClosedEvent));
+        OpenResultsMenu(grid);
+        if (grid.SelectedItem != originalSelection || explorerMenu.IsEnabled || deleteMenu.IsEnabled || !explorer.IsEnabled || !delete.IsEnabled)
+            throw new InvalidOperationException("Empty-space right-click lost selection or enabled item-specific menu actions.");
+        // Exercise WPF's close-before-click ordering for layout commands.
+        CloseResultsMenu();
+        expand.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        content.Measure(new Size(1120, 720));
+        content.Arrange(new Rect(0, 0, 1120, 720));
+        content.UpdateLayout();
+        if (window.WindowState != WindowState.Maximized || optionsCard.Visibility != Visibility.Collapsed ||
+            restore.Visibility != Visibility.Visible || grid.ActualHeight <= normalHeight + 150 ||
+            grid.ItemsSource != originalSource || grid.SelectedItem != originalSelection || pattern.Text != "unicode")
+            throw new InvalidOperationException("Expanding results did not enlarge the area while preserving its state.");
+        restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        content.Measure(new Size(1120, 720));
+        content.Arrange(new Rect(0, 0, 1120, 720));
+        content.UpdateLayout();
+        if (window.WindowState != WindowState.Normal || optionsCard.Visibility != Visibility.Visible ||
+            restore.Visibility != Visibility.Collapsed || grid.ItemsSource != originalSource || grid.SelectedItem != originalSelection)
+            throw new InvalidOperationException("Restoring the normal layout lost results or window state.");
+        OpenResultsMenu(grid, keyboard: true);
+        if (!explorerMenu.IsEnabled || !deleteMenu.IsEnabled || explorerMenu.Tag != originalSelection)
+            throw new InvalidOperationException("Keyboard context menu did not use the selected row.");
+        CloseResultsMenu();
+        var secondRow = (DataGridRow)grid.ItemContainerGenerator.ContainerFromIndex(1);
+        OpenResultsMenu(secondRow);
+        if (grid.SelectedIndex != 1 || explorerMenu.Tag != grid.SelectedItem || !deleteMenu.IsEnabled)
+            throw new InvalidOperationException("Right-clicking a row did not target that row.");
+        CloseResultsMenu();
+        window.WindowState = WindowState.Maximized;
+        expand.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        window.WindowState = WindowState.Normal;
+        restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (window.WindowState != WindowState.Normal)
+            throw new InvalidOperationException("Restoring controls overwrote a manual restore from an initially maximized window.");
+        expand.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        window.WindowState = WindowState.Normal;
+        window.WindowState = WindowState.Maximized;
+        restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (window.WindowState != WindowState.Maximized)
+            throw new InvalidOperationException("Restoring controls overwrote a later manual maximize.");
+        window.WindowState = WindowState.Normal;
+        grid.SelectedIndex = -1;
         if (previewPath is not null)
         {
             var bitmap = new RenderTargetBitmap(1120, 720, 96, 96, PixelFormats.Pbgra32);

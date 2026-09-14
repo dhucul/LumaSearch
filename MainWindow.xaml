@@ -14,14 +14,14 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,22">
+        <StackPanel x:Name="HeaderPanel" Orientation="Horizontal" Margin="0,0,0,22">
             <Image Source="Assets/LumaSearch.png" Width="48" Height="48" Margin="0,0,14,0" />
             <StackPanel>
                 <TextBlock Text="LumaSearch" FontSize="28" FontWeight="SemiBold" />
                 <TextBlock Text="Find files. Explore folders. Clear the clutter." Foreground="#66718A" />
             </StackPanel>
         </StackPanel>
-        <Border Grid.Row="1" Background="White" BorderBrush="#E1E5EE" BorderThickness="1" CornerRadius="12" Padding="22">
+        <Border Grid.Row="1" x:Name="SearchOptionsCard" Background="White" BorderBrush="#E1E5EE" BorderThickness="1" CornerRadius="12" Padding="22">
             <Grid x:Name="SearchOptionsPanel">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
@@ -68,6 +68,8 @@
             <Button x:Name="ExplorerButton" Grid.Column="3" Content="Show in Explorer" Margin="0,0,10,0" IsEnabled="False" Click="Explorer_Click"
                     ToolTip="Open the containing folder in Explorer and highlight the selected file or folder." />
             <Button x:Name="DeleteButton" Grid.Column="4" Content="Delete Selected Item" Foreground="#B42338" IsEnabled="False" Click="Delete_Click" />
+            <Button x:Name="RestoreLayoutButton" Grid.Row="1" Grid.ColumnSpan="2" Content="Restore normal layout"
+                    Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ToggleResultsLayout_Click" />
             <StackPanel Grid.Row="1" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
                 <Label Target="{Binding ElementName=DeletionModeComboBox}" Content="Delete action:" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <ComboBox x:Name="DeletionModeComboBox" Width="225" SelectedIndex="0" SelectedValuePath="Tag"
@@ -85,9 +87,12 @@
                   HorizontalGridLinesBrush="#F0F2F7" BorderBrush="#E1E5EE" Background="White"
                   RowHeight="37" ColumnHeaderHeight="40" AlternatingRowBackground="#FAFBFE"
                   SelectionChanged="ResultsGrid_SelectionChanged" PreviewMouseRightButtonDown="ResultsGrid_PreviewMouseRightButtonDown"
+                  ContextMenuOpening="ResultsGrid_ContextMenuOpening"
                   MouseDoubleClick="ResultsGrid_MouseDoubleClick">
             <DataGrid.ContextMenu>
-                <ContextMenu Opened="ResultsContextMenu_Opened">
+                <ContextMenu Opened="ResultsContextMenu_Opened" Closed="ResultsContextMenu_Closed">
+                    <MenuItem x:Name="ExpandResultsMenuItem" Header="Expand results area" Click="ToggleResultsLayout_Click" />
+                    <Separator />
                     <MenuItem x:Name="ExplorerMenuItem" Header="Show in Explorer" Click="Explorer_Click" />
                     <Separator />
                     <MenuItem x:Name="DeleteMenuItem" Header="Delete Selected Item" Click="Delete_Click" />

@@ -1,5 +1,5 @@
 #define MyAppName "LumaSearch"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "1.4.3"
 #ifndef ReleaseDirectory
   #define ReleaseDirectory AddBackslash(SourcePath) + "..\artifacts\publish\Release\win-x64"
 #endif
