@@ -11,6 +11,8 @@ public static class PackageVerification
     {
         directory = Path.GetFullPath(directory);
         var assembly = Assembly.LoadFile(Path.Combine(directory, "LumaSearch.dll"));
+        if (ExecutableManifest.GetExecutionLevel(Path.Combine(directory, "LumaSearch.exe")) != "requireAdministrator")
+            throw new InvalidOperationException("The application must request administrator privileges.");
         if (assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration != "Release" ||
             assembly.GetCustomAttribute<DebuggableAttribute>()?.IsJITOptimizerDisabled == true)
             throw new InvalidOperationException("An optimized Release build is required.");

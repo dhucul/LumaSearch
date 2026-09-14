@@ -9,7 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>LumaSearch</AssemblyName>
     <RootNamespace>LumaSearch</RootNamespace>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <Company>LumaSearch</Company>
     <Product>LumaSearch</Product>
     <Description>Fast, responsive file and folder search.</Description>

@@ -8,6 +8,8 @@ internal static class AuditRegressionTests
 {
     internal static async Task RunAsync(string root, Action<bool, string> check)
     {
+        check(ExecutableManifest.GetExecutionLevel(Path.ChangeExtension(typeof(App).Assembly.Location, ".exe")) == "requireAdministrator",
+            "built executable embeds the administrator requirement");
         string path = Path.Combine(root, "identity.txt");
         File.WriteAllText(path, "original");
         var original = SearchResult.Capture(path);
@@ -98,14 +100,14 @@ internal static class AuditRegressionTests
         string workerPath = Path.Combine(root, "worker-delete.txt");
         File.WriteAllText(workerPath, "fixture");
         using var job = await DeletionJob.StartAsync(SearchResult.Capture(workerPath), DeletionMode.Permanent,
-            CancellationToken.None, Path.Combine(root, "journals"));
+            CancellationToken.None, Path.Combine(root, "journals"), useManagedTestHost: true);
         var workerOutcome = await job.WaitAsync().WaitAsync(TimeSpan.FromSeconds(15));
         check(workerOutcome.Status == DeletionStatus.PermanentlyDeleted && !File.Exists(workerPath) && File.Exists(Path.Combine(job.JournalPath, "result.json")),
             "isolated deletion worker completes and journals its exact outcome");
         string cancelPath = Path.Combine(root, "worker-cancel.txt");
         File.WriteAllText(cancelPath, "fixture");
         using var cancelledJob = await DeletionJob.StartAsync(SearchResult.Capture(cancelPath), DeletionMode.Permanent,
-            CancellationToken.None, Path.Combine(root, "journals"));
+            CancellationToken.None, Path.Combine(root, "journals"), useManagedTestHost: true);
         cancelledJob.RequestCancel();
         var stoppedOutcome = await cancelledJob.WaitAsync().WaitAsync(TimeSpan.FromSeconds(15));
         check((stoppedOutcome.Status == DeletionStatus.Cancelled && File.Exists(cancelPath)) ||

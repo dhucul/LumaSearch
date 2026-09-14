@@ -14,14 +14,18 @@ public sealed class DeletionJob : IDisposable
     private DeletionJob(Process worker, string journalPath) { _worker = worker; JournalPath = journalPath; }
 
     public static async Task<DeletionJob> StartAsync(SearchResult item, DeletionMode mode, CancellationToken token,
-        string? journalRoot = null)
+        string? journalRoot = null, bool useManagedTestHost = false)
     {
         string directory = Path.Combine(journalRoot ?? JournalRoot, Guid.NewGuid().ToString("N"));
         await Task.Run(() => Directory.CreateDirectory(directory), token);
         await File.WriteAllTextAsync(Path.Combine(directory, "request.json"), JsonSerializer.Serialize(new DeletionRequest(item, mode)), token);
         token.ThrowIfCancellationRequested();
         string executable = Path.ChangeExtension(typeof(App).Assembly.Location, ".exe");
-        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
+        // Production helpers inherit the elevated application's token. Tests use their managed
+        // host to exercise disposable fixtures without a UAC prompt for every worker process.
+        var start = new ProcessStartInfo(useManagedTestHost ? "dotnet.exe" : executable)
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
+        if (useManagedTestHost) start.ArgumentList.Add(typeof(App).Assembly.Location);
         start.ArgumentList.Add("--delete-worker");
         start.ArgumentList.Add(directory);
         var process = Process.Start(start) ?? throw new IOException("Could not start the deletion worker.");
