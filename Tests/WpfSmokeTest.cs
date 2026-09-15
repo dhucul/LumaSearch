@@ -58,9 +58,11 @@ internal static class WpfSmokeTest
             throw new InvalidOperationException("Explorer navigation stayed enabled without a selection.");
         if (delete.IsEnabled) throw new InvalidOperationException("Clearing selection did not disable deletion.");
 
-        void RunSearch()
+        void RunSearch(bool cancelImmediately = false, Action? afterStart = null)
         {
         search.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        afterStart?.Invoke();
+        if (cancelImmediately) ((Button)window.FindName("CancelButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var frame = new DispatcherFrame();
         var deadline = DateTime.UtcNow.AddSeconds(20);
         bool timedOut = false;
@@ -73,7 +75,7 @@ internal static class WpfSmokeTest
         timer.Start();
         Dispatcher.PushFrame(frame);
         timer.Stop();
-        if (timedOut || grid.Items.Count == 0) throw new InvalidOperationException("The UI search did not produce results.");
+        if (timedOut || (!cancelImmediately && grid.Items.Count == 0)) throw new InvalidOperationException("The UI search did not produce results.");
         }
 
         var content = (FrameworkElement)window.Content;
@@ -91,6 +93,10 @@ internal static class WpfSmokeTest
         {
             content.Measure(new Size(1120, 720));
             content.Arrange(new Rect(0, 0, 1120, 720));
+            content.UpdateLayout();
+            var pendingLayout = new DispatcherFrame();
+            Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => pendingLayout.Continue = false));
+            Dispatcher.PushFrame(pendingLayout);
             content.UpdateLayout();
         }
         IEnumerable<T> VisualChildren<T>(DependencyObject parent) where T : DependencyObject
@@ -126,7 +132,7 @@ internal static class WpfSmokeTest
         var resetSizes = (MenuItem)window.FindName("ResetResultsSizesMenuItem");
         resetSizes.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         RefreshLayout();
-        if (Math.Abs(grid.Columns[0].ActualWidth - 240) > 1 || topRow.Height.Value != 260)
+        if (Math.Abs(grid.Columns[0].ActualWidth - 240) > 1 || topRow.Height.Value != 190)
             throw new InvalidOperationException("Reset sizes did not restore the panel and column dimensions.");
         var expand = (MenuItem)window.FindName("ExpandResultsMenuItem");
         var restore = (Button)window.FindName("RestoreLayoutButton");
@@ -192,6 +198,168 @@ internal static class WpfSmokeTest
             throw new InvalidOperationException("Restoring controls overwrote a later manual maximize.");
         window.WindowState = WindowState.Normal;
         grid.SelectedIndex = -1;
+        if (grid.SelectionMode != DataGridSelectionMode.Extended || grid.Columns[3].SortMemberPath != nameof(SearchResult.LastWriteTimeUtc))
+            throw new InvalidOperationException("Extended selection or typed date sorting is not enabled.");
+        var datedItems = new List<SearchResult>();
+        foreach (var fixture in new[] { ("Zulu.txt", new DateTime(2024, 12, 30, 12, 0, 0, DateTimeKind.Utc)),
+            ("Alpha.txt", new DateTime(2026, 1, 2, 12, 0, 0, DateTimeKind.Utc)),
+            ("Middle.txt", new DateTime(2025, 6, 1, 12, 0, 0, DateTimeKind.Utc)) })
+        {
+            string filename = Path.Combine(root, fixture.Item1);
+            File.WriteAllText(filename, "selection and sorting fixture");
+            File.SetLastWriteTimeUtc(filename, fixture.Item2);
+            datedItems.Add(SearchResult.Capture(filename));
+        }
+        ((ResultCollection)grid.ItemsSource).ReplaceAll(datedItems);
+        RefreshLayout();
+        void ClickColumn(int index)
+        {
+            var header = VisualChildren<DataGridColumnHeader>(grid).First(item => item.Column == grid.Columns[index]);
+            var button = VisualChildren<Button>(header).Single(item => item.Name == "SortHeaderButton");
+            if (!button.IsEnabled) throw new InvalidOperationException("A sort header is disabled.");
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            RefreshLayout();
+        }
+        ClickColumn(0);
+        if (!grid.Items.Cast<SearchResult>().Select(item => item.Name).SequenceEqual(new[] { "Alpha.txt", "Middle.txt", "Zulu.txt" }))
+            throw new InvalidOperationException("Clicking Name did not sort alphabetically.");
+        ClickColumn(3);
+        if (!grid.Items.Cast<SearchResult>().Select(item => item.Name).SequenceEqual(new[] { "Zulu.txt", "Middle.txt", "Alpha.txt" }))
+            throw new InvalidOperationException("Clicking Date Modified did not sort chronologically.");
+        ClickColumn(3);
+        if (!grid.Items.Cast<SearchResult>().Select(item => item.Name).SequenceEqual(new[] { "Alpha.txt", "Middle.txt", "Zulu.txt" }))
+            throw new InvalidOperationException("Clicking Date Modified again did not reverse the sort.");
+        ClickColumn(1);
+        if (grid.Items.SortDescriptions[0].PropertyName != nameof(SearchResult.Type) || grid.Columns[1].SortDirection != System.ComponentModel.ListSortDirection.Ascending)
+            throw new InvalidOperationException("Clicking Type did not sort by type.");
+        ClickColumn(1);
+        if (grid.Columns[1].SortDirection != System.ComponentModel.ListSortDirection.Descending)
+            throw new InvalidOperationException("Clicking Type again did not reverse sorting.");
+        ClickColumn(2);
+        if (grid.Items.SortDescriptions[0].PropertyName != nameof(SearchResult.FullPath) || grid.Columns[2].SortDirection != System.ComponentModel.ListSortDirection.Ascending)
+            throw new InvalidOperationException("Clicking Full Path did not sort by path.");
+        ClickColumn(2);
+        if (grid.Columns[2].SortDirection != System.ComponentModel.ListSortDirection.Descending)
+            throw new InvalidOperationException("Clicking Full Path again did not reverse sorting.");
+        using (var modifierKeyboard = new ModifierKeyboard())
+        {
+            void ClickRow(int index, ModifierKeys modifiers)
+            {
+                grid.ScrollIntoView(grid.Items[index]);
+                RefreshLayout();
+                var row = (DataGridRow)grid.ItemContainerGenerator.ContainerFromIndex(index);
+                var cell = VisualChildren<DataGridCell>(row).First(item => item.Column == grid.Columns[0]);
+                modifierKeyboard.Held = modifiers;
+                if (Keyboard.Modifiers != modifiers) throw new InvalidOperationException("The test keyboard modifiers were not applied.");
+                try
+                {
+                    cell.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = Mouse.PreviewMouseDownEvent });
+                    cell.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = Mouse.MouseDownEvent });
+                    cell.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = Mouse.MouseUpEvent });
+                }
+                finally { modifierKeyboard.Held = ModifierKeys.None; }
+                RefreshLayout();
+            }
+            ClickRow(0, ModifierKeys.None);
+            ClickRow(2, ModifierKeys.Shift);
+            if (grid.SelectedItems.Count != 3) throw new InvalidOperationException("Shift-click did not select the visible range after date sorting.");
+            ClickRow(0, ModifierKeys.None);
+            ClickRow(2, ModifierKeys.Control);
+            if (grid.SelectedItems.Count != 2 || grid.SelectedItems.Contains(grid.Items[1]))
+                throw new InvalidOperationException("Ctrl-click did not select separate rows.");
+            ClickRow(0, ModifierKeys.Control);
+            if (grid.SelectedItems.Count != 1 || !grid.SelectedItems.Contains(grid.Items[2]))
+                throw new InvalidOperationException("Ctrl-click did not toggle an existing selection.");
+        }
+        grid.UnselectAll();
+        grid.SelectedItems.Add(grid.Items[0]);
+        grid.SelectedItems.Add(grid.Items[2]);
+        if (grid.SelectedItems.Count != 2 || !delete.IsEnabled || explorer.IsEnabled || !delete.Content.ToString()!.Contains("2"))
+            throw new InvalidOperationException("Non-adjacent selection did not enable the correct batch action.");
+        grid.ScrollIntoView(grid.Items[2]);
+        RefreshLayout();
+        OpenResultsMenu((DataGridRow)grid.ItemContainerGenerator.ContainerFromIndex(2));
+        if (grid.SelectedItems.Count != 2 || deleteMenu.Tag is not SearchResult[] { Length: 2 } || !deleteMenu.IsEnabled || explorerMenu.IsEnabled)
+            throw new InvalidOperationException("Right-clicking a selected row lost or mis-targeted the multi-selection.");
+        CloseResultsMenu();
+        OpenResultsMenu(grid);
+        if (grid.SelectedItems.Count != 2 || deleteMenu.IsEnabled)
+            throw new InvalidOperationException("Empty-space context menu changed the multi-selection.");
+        CloseResultsMenu();
+        var selectedBeforeSort = grid.SelectedItems.Cast<SearchResult>().ToHashSet();
+        ClickColumn(0);
+        if (!selectedBeforeSort.SetEquals(grid.SelectedItems.Cast<SearchResult>()))
+            throw new InvalidOperationException("Sorting lost the selected items.");
+        var sortState = ResultsSortState.Capture(grid);
+        ResultsSortState.Suspend(grid);
+        if (grid.Items.SortDescriptions.Count != 0 || grid.Columns.Any(column => column.SortDirection is not null))
+            throw new InvalidOperationException("Suspending a sort left a stale indicator.");
+        sortState.Restore(grid);
+        if (grid.Columns[0].SortDirection != System.ComponentModel.ListSortDirection.Ascending)
+            throw new InvalidOperationException("Restoring a sort did not restore its indicator.");
+
+        var actualGrid = (ResultsDataGrid)grid;
+        var originals = grid.Items.Cast<SearchResult>().ToArray();
+        var large = Enumerable.Range(0, 5000).Select(i => new SearchResult($"bulk-{i:D5}", Path.Combine(root, $"bulk-{i:D5}"), false)).ToArray();
+        ((ResultCollection)grid.ItemsSource).ReplaceAll(large);
+        int selectionNotifications = 0;
+        SelectionChangedEventHandler counter = (_, _) => selectionNotifications++;
+        grid.SelectionChanged += counter;
+        actualGrid.ReplaceSelection(large);
+        grid.SelectionChanged -= counter;
+        if (grid.SelectedItems.Count != 5000 || selectionNotifications != 1)
+            throw new InvalidOperationException("Large selection restoration was not batched.");
+        ((ResultCollection)grid.ItemsSource).ReplaceAll(originals);
+        actualGrid.ReplaceSelection(originals.Take(2));
+        RefreshLayout();
+        var dialog = new BatchDeleteDialog(new BatchPreflight([originals[0]],
+            [new(originals[1], DeletionStatus.Failed, "Locked fixture; will be skipped.")]), 2, DeletionMode.RecycleBin);
+        if (((DataGrid)dialog.FindName("Targets")).Items.Count != 2 || !((Button)dialog.FindName("CancelAction")).IsCancel)
+            throw new InvalidOperationException("Batch confirmation does not show all targets or a cancel action.");
+        var dialogContent = (FrameworkElement)dialog.Content;
+        dialogContent.Measure(new Size(980, 480));
+        dialogContent.Arrange(new Rect(0, 0, 980, 480));
+        dialogContent.UpdateLayout();
+        var dialogLayout = new DispatcherFrame();
+        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => dialogLayout.Continue = false));
+        Dispatcher.PushFrame(dialogLayout);
+        dialogContent.UpdateLayout();
+        if (previewPath is not null)
+        {
+            var dialogBitmap = new RenderTargetBitmap(980, 480, 96, 96, PixelFormats.Pbgra32);
+            dialogBitmap.Render(dialogContent);
+            var dialogEncoder = new PngBitmapEncoder();
+            dialogEncoder.Frames.Add(BitmapFrame.Create(dialogBitmap));
+            using var dialogOutput = File.Create(Path.ChangeExtension(previewPath, ".confirmation.png"));
+            dialogEncoder.Save(dialogOutput);
+        }
+        dialog.Close();
+        matchMode.SelectedValue = NameMatchMode.Wildcard;
+        pattern.Text = "*.txt";
+        RunSearch();
+        if (grid.Columns[0].SortDirection != System.ComponentModel.ListSortDirection.Ascending ||
+            grid.Items.SortDescriptions.Count == 0 || grid.Items.SortDescriptions[0].PropertyName != nameof(SearchResult.Name))
+            throw new InvalidOperationException("A new search lost the selected Name sort.");
+        ClickColumn(3);
+        var expectedDateDirection = grid.Columns[3].SortDirection;
+        RunSearch();
+        if (grid.Columns[3].SortDirection != expectedDateDirection || grid.Items.SortDescriptions[0].PropertyName != nameof(SearchResult.LastWriteTimeUtc))
+            throw new InvalidOperationException("A new search lost the selected date sort.");
+        RunSearch(cancelImmediately: true);
+        if (grid.Columns[3].SortDirection != expectedDateDirection || grid.Items.SortDescriptions[0].PropertyName != nameof(SearchResult.LastWriteTimeUtc))
+            throw new InvalidOperationException("Cancelling a search lost the selected sort.");
+        RunSearch();
+        RefreshLayout();
+        RunSearch(afterStart: () =>
+        {
+            if (search.IsEnabled || !grid.CanUserSortColumns)
+                throw new InvalidOperationException("The live-sort test did not start during an active search.");
+            ClickColumn(0);
+        });
+        if (grid.Items.SortDescriptions[0].PropertyName != nameof(SearchResult.Name) ||
+            grid.Columns[0].SortDirection != System.ComponentModel.ListSortDirection.Ascending)
+            throw new InvalidOperationException("A header sort selected during scanning was overwritten at completion.");
+        ScrollAlignmentTests.Run(window, RefreshLayout, previewPath);
         if (previewPath is not null)
         {
             var bitmap = new RenderTargetBitmap(1120, 720, 96, 96, PixelFormats.Pbgra32);

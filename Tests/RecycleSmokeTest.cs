@@ -25,6 +25,15 @@ internal static class RecycleSmokeTest
             if (folderOutcome.Status != DeletionStatus.Recycled) throw new InvalidOperationException("Folder recycling was not confirmed.");
             if (Directory.Exists(folder)) throw new InvalidOperationException("Recycled folder remains at its original location.");
             Console.WriteLine("PASS: Windows confirmed the test folder and its contents were moved to the Recycle Bin.");
+            string first = Path.Combine(root, "LumaSearch disposable batch file 1.txt");
+            string second = Path.Combine(root, "LumaSearch disposable batch file 2.txt");
+            await File.WriteAllTextAsync(first, "Disposable batch fixture.");
+            await File.WriteAllTextAsync(second, "Disposable batch fixture.");
+            var batch = await BatchDeletion.ExecuteAsync([SearchResult.Capture(first), SearchResult.Capture(second)],
+                DeletionMode.RecycleBin, CancellationToken.None);
+            if (batch.Status != DeletionStatus.Recycled || batch.Items?.Length != 2 || File.Exists(first) || File.Exists(second))
+                throw new InvalidOperationException("Multi-item recycling was not confirmed.");
+            Console.WriteLine("PASS: Windows confirmed both selected test files reached the Recycle Bin.");
         }
         finally
         {

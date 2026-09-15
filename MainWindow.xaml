@@ -4,25 +4,61 @@
         xmlns:local="clr-namespace:LumaSearch"
         Title="LumaSearch" Width="1120" Height="760" MinWidth="800" MinHeight="580"
         WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#F5F6FA" Foreground="#202940"
-        FontFamily="Segoe UI" FontSize="14" Icon="Assets/LumaSearch.ico"
+        FontFamily="Segoe UI" FontSize="13" Icon="Assets/LumaSearch.ico" UseLayoutRounding="True" SnapsToDevicePixels="True"
         Closing="Window_Closing">
-    <Grid x:Name="MainLayout" Margin="28" Background="#F5F6FA" SizeChanged="ResizeLayout_SizeChanged">
+    <Window.Resources>
+        <local:SortDirectionConverter x:Key="SortDirectionArrow" />
+        <DataTemplate x:Key="SortableHeader">
+            <Button x:Name="SortHeaderButton" Click="SortHeader_Click" MinHeight="0" Padding="0" Margin="0"
+                    BorderThickness="0" Background="Transparent" Cursor="Hand" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Left" VerticalContentAlignment="Center"
+                    AutomationProperties.Name="{Binding}">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="HeaderBackground" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="HeaderBackground" Property="Background" Value="#E1E7F7" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="HeaderBackground" Property="Background" Value="#D8E0F5" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Column.SortDirection, RelativeSource={RelativeSource AncestorType={x:Type DataGridColumnHeader}}, Converter={StaticResource SortDirectionArrow}}"
+                               Margin="6,0,0,0" Foreground="#4F46E5" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </DataTemplate>
+        <Style x:Key="ResultCellText" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="5,0" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="TextAlignment" Value="Left" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+        </Style>
+    </Window.Resources>
+    <Grid x:Name="MainLayout" Margin="16" Background="#F5F6FA" SizeChanged="ResizeLayout_SizeChanged">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition x:Name="SearchControlsRow" Height="260" MinHeight="60" />
+            <RowDefinition x:Name="SearchControlsRow" Height="190" MinHeight="60" />
             <RowDefinition Height="Auto" />
-            <RowDefinition x:Name="ResultsRegionRow" Height="*" MinHeight="190" />
+            <RowDefinition x:Name="ResultsRegionRow" Height="*" MinHeight="160" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <StackPanel x:Name="HeaderPanel" Orientation="Horizontal" Margin="0,0,0,22">
-            <Image Source="Assets/LumaSearch.png" Width="48" Height="48" Margin="0,0,14,0" />
-            <StackPanel>
-                <TextBlock Text="LumaSearch" FontSize="28" FontWeight="SemiBold" />
-                <TextBlock Text="Find files. Explore folders. Clear the clutter." Foreground="#66718A" />
+        <StackPanel x:Name="HeaderPanel" Orientation="Horizontal" Margin="0,0,0,10">
+            <Image Source="Assets/LumaSearch.png" Width="32" Height="32" Margin="0,0,10,0" />
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="LumaSearch" FontSize="22" FontWeight="SemiBold" />
             </StackPanel>
         </StackPanel>
         <ScrollViewer Grid.Row="1" x:Name="SearchControlsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <Border x:Name="SearchOptionsCard" Background="White" BorderBrush="#E1E5EE" BorderThickness="1" CornerRadius="12" Padding="22">
+        <Border x:Name="SearchOptionsCard" Background="White" BorderBrush="#E1E5EE" BorderThickness="1" CornerRadius="8" Padding="12">
             <Grid x:Name="SearchOptionsPanel">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
@@ -30,18 +66,18 @@
                     <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <Label Target="{Binding ElementName=DirectoryTextBox}" Content="Starting _directory" Padding="0,0,0,7" FontWeight="SemiBold" />
-                <Grid Grid.Row="1" Grid.ColumnSpan="3" Margin="0,0,0,15">
+                <Label Target="{Binding ElementName=DirectoryTextBox}" Content="Starting _directory" Padding="0,0,0,4" FontWeight="SemiBold" />
+                <Grid Grid.Row="1" Grid.ColumnSpan="3" Margin="0,0,0,8">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <TextBox x:Name="DirectoryTextBox" AutomationProperties.Name="Starting directory" />
                     <Button Grid.Column="1" Content="Browse…" Margin="10,0,0,0" Click="Browse_Click" />
                 </Grid>
-                <Label Grid.Row="2" Target="{Binding ElementName=PatternTextBox}" Content="File or folder _name" Padding="0,0,0,7" FontWeight="SemiBold" />
-                <Label Grid.Row="2" Grid.Column="2" Target="{Binding ElementName=TargetTextBox}" Content="_Text inside files" Padding="0,0,0,7" FontWeight="SemiBold" />
+                <Label Grid.Row="2" Target="{Binding ElementName=PatternTextBox}" Content="File or folder _name" Padding="0,0,0,4" FontWeight="SemiBold" />
+                <Label Grid.Row="2" Grid.Column="2" Target="{Binding ElementName=TargetTextBox}" Content="_Text inside files" Padding="0,0,0,4" FontWeight="SemiBold" />
                 <Grid Grid.Row="3">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="155" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <ComboBox x:Name="NameMatchComboBox" SelectedIndex="0" SelectedValuePath="Tag"
-                              Margin="0,0,10,0" Padding="9,8" VerticalContentAlignment="Center"
+                              Margin="0,0,10,0" Padding="7,4" VerticalContentAlignment="Center"
                               AutomationProperties.Name="Name matching mode" SelectionChanged="NameMatchComboBox_SelectionChanged">
                         <ComboBoxItem Content="Name contains" Tag="{x:Static local:NameMatchMode.Contains}" />
                         <ComboBoxItem Content="Exact name" Tag="{x:Static local:NameMatchMode.Exact}" />
@@ -51,8 +87,8 @@
                              ToolTip="{Binding Text, ElementName=NameHintTextBlock}" />
                 </Grid>
                 <TextBox Grid.Row="3" Grid.Column="2" x:Name="TargetTextBox" MaxLength="4096" AutomationProperties.Name="Text inside files" ToolTip="Literal text, ignoring case. Matches within a line. Supports UTF-8 and BOM-marked UTF-16/UTF-32." />
-                <TextBlock Grid.Row="4" x:Name="NameHintTextBlock" TextWrapping="Wrap" FontSize="12" Foreground="#66718A" Margin="0,6,0,18" />
-                <TextBlock Grid.Row="4" Grid.Column="2" Text="Optional · applies to files only · ignores case" FontSize="12" Foreground="#66718A" Margin="0,6,0,18" />
+                <TextBlock Grid.Row="4" x:Name="NameHintTextBlock" TextWrapping="Wrap" FontSize="11" Foreground="#66718A" Margin="0,4,0,10" />
+                <TextBlock Grid.Row="4" Grid.Column="2" Text="Optional · applies to files only · ignores case" FontSize="11" Foreground="#66718A" Margin="0,4,0,10" />
                 <StackPanel Grid.Row="5" Grid.ColumnSpan="3" Orientation="Horizontal">
                     <CheckBox x:Name="SearchFilesCheckBox" Content="Search Files" IsChecked="True" />
                     <CheckBox x:Name="SearchFoldersCheckBox" Content="Search Folders" IsChecked="True" />
@@ -61,7 +97,7 @@
             </Grid>
         </Border>
         </ScrollViewer>
-        <GridSplitter Grid.Row="2" x:Name="ResultsSplitter" Height="22" Margin="0,5,0,0"
+        <GridSplitter Grid.Row="2" x:Name="ResultsSplitter" Height="18" Margin="0,4,0,0"
                       HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Rows"
                       ResizeBehavior="PreviousAndNext" ShowsPreview="False" Cursor="SizeNS" Focusable="True"
                       KeyboardIncrement="20" DragIncrement="1" AutomationProperties.Name="Resize results area"
@@ -70,14 +106,14 @@
                 <ControlTemplate TargetType="GridSplitter">
                     <Border Background="#DFE3F0" CornerRadius="4">
                         <TextBlock Text="↕  Drag here to stretch the results area" HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" FontSize="12" Foreground="#4F46E5" />
+                                   VerticalAlignment="Center" FontSize="11" Foreground="#4F46E5" />
                     </Border>
                 </ControlTemplate>
             </GridSplitter.Template>
         </GridSplitter>
         <Grid Grid.Row="3">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" MinHeight="70" /></Grid.RowDefinitions>
-        <Grid Grid.Row="0" Margin="0,10,0,14">
+        <Grid Grid.Row="0" Margin="0,6,0,8">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Button x:Name="SearchButton" Content="Search" Width="120" Background="{StaticResource AccentBrush}" BorderBrush="{StaticResource AccentBrush}" Foreground="White" FontWeight="SemiBold" IsDefault="True" Click="Search_Click" />
@@ -87,23 +123,25 @@
                     ToolTip="Open the containing folder in Explorer and highlight the selected file or folder." />
             <Button x:Name="DeleteButton" Grid.Column="4" Content="Delete Selected Item" Foreground="#B42338" IsEnabled="False" Click="Delete_Click" />
             <Button x:Name="RestoreLayoutButton" Grid.Row="1" Grid.ColumnSpan="2" Content="Restore normal layout"
-                    Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ToggleResultsLayout_Click" />
-            <StackPanel Grid.Row="1" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                    Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,6,0,0" Click="ToggleResultsLayout_Click" />
+            <StackPanel Grid.Row="1" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
                 <Label Target="{Binding ElementName=DeletionModeComboBox}" Content="Delete action:" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <ComboBox x:Name="DeletionModeComboBox" Width="225" SelectedIndex="0" SelectedValuePath="Tag"
-                          Padding="9,7" AutomationProperties.Name="Delete action" SelectionChanged="DeletionModeComboBox_SelectionChanged">
+                          Padding="7,4" AutomationProperties.Name="Delete action" SelectionChanged="DeletionModeComboBox_SelectionChanged">
                     <ComboBoxItem Content="Send to Recycle Bin" Tag="{x:Static local:DeletionMode.RecycleBin}" />
                     <ComboBoxItem Content="Delete permanently (immediate)" Tag="{x:Static local:DeletionMode.Permanent}" />
                 </ComboBox>
             </StackPanel>
         </Grid>
-        <DataGrid Grid.Row="1" x:Name="ResultsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserResizeColumns="True"
-                  CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" SelectionUnit="FullRow"
-                  EnableRowVirtualization="True" EnableColumnVirtualization="True"
+        <local:ResultsDataGrid Grid.Row="1" x:Name="ResultsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserResizeColumns="True"
+                  CanUserSortColumns="True" Sorting="ResultsGrid_Sorting"
+                  CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Extended" SelectionUnit="FullRow"
+                  EnableRowVirtualization="True" EnableColumnVirtualization="False"
                   VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                  VirtualizingPanel.ScrollUnit="Pixel" ClipToBounds="True"
                   ScrollViewer.CanContentScroll="True" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                   HorizontalGridLinesBrush="#F0F2F7" BorderBrush="#E1E5EE" Background="White"
-                  RowHeight="37" ColumnHeaderHeight="40" AlternatingRowBackground="#FAFBFE"
+                  RowHeight="24" ColumnHeaderHeight="28" AlternatingRowBackground="#FAFBFE"
                   SelectionChanged="ResultsGrid_SelectionChanged" PreviewMouseRightButtonDown="ResultsGrid_PreviewMouseRightButtonDown"
                   ContextMenuOpening="ResultsGrid_ContextMenuOpening"
                   MouseDoubleClick="ResultsGrid_MouseDoubleClick">
@@ -117,30 +155,61 @@
                     <MenuItem x:Name="DeleteMenuItem" Header="Delete Selected Item" Click="Delete_Click" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
+            <DataGrid.CellStyle>
+                <Style TargetType="DataGridCell">
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="ClipToBounds" Value="True" />
+                    <Setter Property="SnapsToDevicePixels" Value="True" />
+                </Style>
+            </DataGrid.CellStyle>
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Setter Property="ClipToBounds" Value="True" />
+                    <Setter Property="SnapsToDevicePixels" Value="True" />
+                </Style>
+            </DataGrid.RowStyle>
             <DataGrid.ColumnHeaderStyle>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Padding" Value="8,0" />
+                    <Setter Property="Padding" Value="5,0" />
+                    <Setter Property="FontSize" Value="12" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                    <Setter Property="Background" Value="#F0F2F7" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="ContentTemplate" Value="{StaticResource SortableHeader}" />
                     <Setter Property="BorderBrush" Value="#BAC2D5" />
                     <Setter Property="BorderThickness" Value="0,0,1,1" />
-                    <Setter Property="ToolTip" Value="Drag the right edge of this header to stretch the column." />
+                    <Setter Property="ToolTip" Value="Click to sort; click again to reverse. Drag the right edge to resize." />
                 </Style>
             </DataGrid.ColumnHeaderStyle>
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="240" MinWidth="100" CanUserResize="True" />
-                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="90" CanUserResize="True" />
-                <DataGridTextColumn Header="Full Path" Binding="{Binding FullPath}" Width="*" MinWidth="250" CanUserResize="True">
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" SortMemberPath="Name" CanUserSort="True" Width="240" MinWidth="100" CanUserResize="True" ElementStyle="{StaticResource ResultCellText}" />
+                <DataGridTextColumn Header="Type" Binding="{Binding Type}" SortMemberPath="Type" CanUserSort="True" Width="90" CanUserResize="True" ElementStyle="{StaticResource ResultCellText}" />
+                <DataGridTextColumn Header="Full Path" Binding="{Binding FullPath}" SortMemberPath="FullPath" CanUserSort="True" Width="*" MinWidth="250" CanUserResize="True">
                     <DataGridTextColumn.ElementStyle>
-                        <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding FullPath}" /><Setter Property="VerticalAlignment" Value="Center" /><Setter Property="Padding" Value="8,0" /></Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource ResultCellText}"><Setter Property="ToolTip" Value="{Binding FullPath}" /></Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Date Modified" Binding="{Binding DateModified, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}, TargetNullValue=—}"
+                                    SortMemberPath="LastWriteTimeUtc" CanUserSort="True" Width="190" MinWidth="150" CanUserResize="True">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource ResultCellText}">
+                            <Setter Property="ToolTip" Value="{Binding DateModified, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}, TargetNullValue=Date unavailable}" />
+                        </Style>
                     </DataGridTextColumn.ElementStyle>
                 </DataGridTextColumn>
             </DataGrid.Columns>
-        </DataGrid>
+        </local:ResultsDataGrid>
         </Grid>
-        <StackPanel Grid.Row="4" x:Name="FooterPanel" Margin="0,14,0,0" SizeChanged="ResizeLayout_SizeChanged">
+        <StackPanel Grid.Row="4" x:Name="FooterPanel" Margin="0,6,0,0" SizeChanged="ResizeLayout_SizeChanged">
+            <TextBlock Text="Shift-click: select a range · Ctrl-click: select separate items · Click Name or Date Modified to sort"
+                       Foreground="#66718A" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,3" />
             <TextBlock x:Name="SelectionTextBlock" Text="Select a result to see exactly what will be deleted."
-                       TextWrapping="Wrap" Foreground="#25304A" Margin="0,0,0,10" />
+                       TextWrapping="Wrap" Foreground="#25304A" Margin="0,0,0,4" />
             <ProgressBar x:Name="SearchProgress" Height="3" IsIndeterminate="False" Foreground="{StaticResource AccentBrush}" Background="#E1E5EE" />
-            <TextBlock x:Name="StatusTextBlock" Text="Ready to search. Folder links are listed but never followed." Margin="0,9,0,0" Foreground="#66718A" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+            <TextBlock x:Name="StatusTextBlock" Text="Ready to search. Folder links are listed but never followed." Margin="0,4,0,0" FontSize="11" Foreground="#66718A" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
     </Grid>
 </Window>

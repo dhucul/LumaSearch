@@ -1,0 +1,33 @@
+<Window x:Class="LumaSearch.BatchDeleteDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Confirm selected items" Width="980" Height="520" MinWidth="760" MinHeight="340"
+        WindowStartupLocation="CenterOwner" Background="#F5F6FA" Foreground="#202940" FontFamily="Segoe UI" FontSize="14">
+    <Grid Margin="22" Background="#F5F6FA">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <TextBlock x:Name="Heading" FontWeight="SemiBold" FontSize="22" TextWrapping="Wrap" />
+        <TextBlock x:Name="Scope" Grid.Row="1" TextWrapping="Wrap" Margin="0,12,0,16" />
+        <DataGrid x:Name="Targets" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
+                  EnableRowVirtualization="True" HeadersVisibility="Column" RowHeight="30">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="160" />
+                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="90" />
+                <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="135" />
+                <DataGridTextColumn Header="Full Path" Binding="{Binding FullPath}" Width="*" MinWidth="250">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding FullPath}" /></Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Details" Binding="{Binding Detail}" Width="220">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding Detail}" /></Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelAction" Content="Cancel" IsCancel="True" MinWidth="100" Margin="0,0,12,0" />
+            <Button x:Name="ConfirmAction" Click="Confirm_Click" MinWidth="180" Foreground="#B42338" />
+        </StackPanel>
+    </Grid>
+</Window>

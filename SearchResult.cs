@@ -3,8 +3,9 @@ namespace LumaSearch;
 public sealed record FileIdentity(ulong Volume, ulong IdLow, ulong IdHigh, long CreationTime);
 
 public sealed record SearchResult(string Name, string FullPath, bool IsDirectory,
-    bool IsLink = false, FileIdentity? Identity = null)
+    bool IsLink = false, FileIdentity? Identity = null, DateTime? LastWriteTimeUtc = null)
 {
+    public DateTime? DateModified => LastWriteTimeUtc?.ToLocalTime();
     public string Type => IsLink ? (IsDirectory ? "Folder link" : "File link") : IsDirectory ? "Folder" : "File";
     public static SearchResult Capture(string path) => FileIdentityService.Capture(path);
 }

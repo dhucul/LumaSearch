@@ -163,6 +163,7 @@ try
     catch (IOException) { changedTypeRefused = true; }
     Check(changedTypeRefused, "Explorer detects a stale item type");
     await AuditRegressionTests.RunAsync(root, Check);
+    await BatchAndDateTests.RunAsync(root, Check);
     Exception? uiFailure = null;
     string? previewPath = args.FirstOrDefault();
     var uiThread = new Thread(() =>

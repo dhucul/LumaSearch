@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -20,13 +21,15 @@ public partial class MainWindow : Window
     private DeletionJob? _deletionJob;
     private OperationState _state;
     private long _operationId;
+    private long _sortRevision;
     private bool _closed;
     private bool _resultsExpanded;
     private WindowState _previousWindowState;
     private bool _restoreWindowState;
     private bool _changingLayoutWindowState;
     private bool _resultsContextMenuActive;
-    private GridLength _savedSearchControlsHeight = new(260);
+    private bool _restoringSelection;
+    private GridLength _savedSearchControlsHeight = new(190);
     private GridLength _savedResultsHeight = new(1, GridUnitType.Star);
     private readonly DependencyPropertyDescriptor _windowStateDescriptor =
         DependencyPropertyDescriptor.FromProperty(WindowStateProperty, typeof(Window));
@@ -118,8 +121,10 @@ public partial class MainWindow : Window
         { MessageBox.Show(this, ex.Message, "Cannot start search", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
 
         var (id, cancellation) = BeginOperation(OperationState.Searching);
+        var savedSort = ResultsSortState.Capture(ResultsGrid);
+        long sortRevisionAtStart = _sortRevision;
         _results.Clear();
-        ResultsGrid.Items.SortDescriptions.Clear();
+        ResultsSortState.Suspend(ResultsGrid);
         var statistics = new ScanStatistics();
         var stopwatch = Stopwatch.StartNew();
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -157,6 +162,7 @@ public partial class MainWindow : Window
             cancellation.Cancel();
             // Never wait on an uninterruptible read to release the UI. Its owner disposes the token when it exits.
             ReadOnlyWork.Observe(worker, cancellation);
+            if (!_closed && id == _operationId && sortRevisionAtStart == _sortRevision) savedSort.Restore(ResultsGrid);
             EndOperation(id);
             if (!_closed && id == _operationId) SetProgress(statistics, stopwatch.Elapsed, outcome);
         }
@@ -186,35 +192,58 @@ public partial class MainWindow : Window
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
-        if (_state != OperationState.Idle || GetActionTarget(sender) is not SearchResult item || item.Identity is null) return;
+        var selection = GetActionTargets(sender);
+        if (_state != OperationState.Idle || selection.Length == 0) return;
         DeletionMode mode = SelectedDeletionMode;
         var (id, cancel) = BeginOperation(OperationState.PreparingDelete);
-        Task<SearchResult?> validation = ReadOnlyWork.RunAsync(() => FileDeletionService.ValidateTarget(item), cancel.Token);
+        StatusTextBlock.Text = "Checking selected items; unavailable items will be listed separately. Cancel to stop.";
+        Task<BatchPreflight> validation = ReadOnlyWork.RunAsync(() => BatchDeletion.ValidateSelection(selection, cancel.Token), cancel.Token);
         DeletionOutcome? outcome = null;
         try
         {
-            var validated = await validation.WaitAsync(TimeSpan.FromSeconds(10), cancel.Token);
+            var validated = await validation.WaitAsync(cancel.Token);
             if (_closed) return;
-            if (validated is null) outcome = FileDeletionService.Missing();
+            var plan = validated.Eligible;
+            int total = plan.Length + validated.Unavailable.Length;
+            if (plan.Length == 0)
+                outcome = BatchDeletion.Summarize(total, validated.Unavailable, mode);
             else
             {
-                if (MessageBox.Show(this, FileDeletionService.GetConfirmationMessage(validated, mode),
-                    mode == DeletionMode.RecycleBin ? "Send selected item to Recycle Bin?" : "Permanently delete selected item?",
-                    MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+                bool confirmed = selection.Length == 1 && validated.Unavailable.Length == 0
+                    ? MessageBox.Show(this, FileDeletionService.GetConfirmationMessage(plan[0], mode),
+                        mode == DeletionMode.RecycleBin ? "Send selected item to Recycle Bin?" : "Permanently delete selected item?",
+                        MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes
+                    : new BatchDeleteDialog(validated, selection.Length, mode) { Owner = this }.ShowDialog() == true;
+                if (!confirmed) return;
                 _state = OperationState.Deleting;
                 UpdateControls();
-                StatusTextBlock.Text = mode == DeletionMode.RecycleBin ? "Sending selected item to the Recycle Bin…" : "Permanently deleting selected item…";
-                _deletionJob = await DeletionJob.StartAsync(item, mode, cancel.Token);
+                StatusTextBlock.Text = mode == DeletionMode.RecycleBin ? $"Sending {plan.Length:N0} targets to the Recycle Bin…" : $"Permanently deleting {plan.Length:N0} targets…";
+                _deletionJob = await DeletionJob.StartAsync(plan, mode, cancel.Token);
                 if (_closed) { _deletionJob.RequestCancel(); return; }
                 outcome = await _deletionJob.WaitAsync();
+                var combined = validated.Unavailable.Concat(outcome.Items ?? []).ToArray();
+                if (outcome.Status == DeletionStatus.Unknown)
+                {
+                    var known = combined.Select(item => item.Item.FullPath).ToHashSet(StringComparer.Ordinal);
+                    combined = combined.Concat(plan.Where(item => !known.Contains(item.FullPath))
+                        .Select(item => new ItemDeletionOutcome(item, DeletionStatus.Unknown, "Outcome not confirmed."))).ToArray();
+                }
+                var summary = BatchDeletion.Summarize(total, combined, mode,
+                    outcome.Status is DeletionStatus.Failed or DeletionStatus.Unknown ? outcome.Message : null);
+                outcome = outcome.Status == DeletionStatus.Unknown ? summary with { Status = DeletionStatus.Unknown } : summary;
             }
             if (_closed) return;
-            bool removed = outcome.Status is DeletionStatus.Recycled or DeletionStatus.PermanentlyDeleted or DeletionStatus.AlreadyMissing;
-            bool reconciled = await ReconcileAsync(item, removed, id, cancel.Token);
+            var results = outcome.Items ?? [];
+            bool reconciled = await ReconcileAsync(results, id, cancel.Token);
             if (_closed) return;
             StatusTextBlock.Text = outcome.Message + (reconciled ? "" : " Refresh the search to confirm which items remain.");
             if (outcome.Status is DeletionStatus.Failed or DeletionStatus.Unknown)
-                MessageBox.Show(this, outcome.Message, "Operation did not complete", MessageBoxButton.OK, MessageBoxImage.Warning);
+            {
+                string failures = string.Join("\n\n", results.Where(item => item.Status is DeletionStatus.Failed or DeletionStatus.Unknown)
+                    .Take(10).Select(item => item.Item.FullPath + "\n" + item.Message));
+                MessageBox.Show(this, outcome.Message + (failures.Length == 0 ? "" : "\n\n" + failures),
+                    "Operation did not complete", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
         catch (OperationCanceledException) { if (!_closed) StatusTextBlock.Text = "Operation cancelled before deletion started."; }
         catch (Exception ex) { if (!_closed) { StatusTextBlock.Text = "Operation did not complete."; MessageBox.Show(this, ex.Message, "Deletion unavailable", MessageBoxButton.OK, MessageBoxImage.Warning); } }
@@ -227,19 +256,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task<bool> ReconcileAsync(SearchResult item, bool removed, long id, CancellationToken token)
+    private async Task<bool> ReconcileAsync(ItemDeletionOutcome[] outcomes, long id, CancellationToken token)
     {
         SearchResult[] snapshot = _results.ToArray();
-        SearchResult? selected = ResultsGrid.SelectedItem as SearchResult;
-        var work = ReadOnlyWork.RunAsync(() => FileDeletionService.Reconcile(snapshot, item, removed), token);
+        SearchResult[] selected = GetSelectedItems();
+        var work = ReadOnlyWork.RunAsync(() => BatchDeletion.Reconcile(snapshot, outcomes), token);
         try
         {
             var survivors = await work.WaitAsync(TimeSpan.FromSeconds(3), token);
             if (_closed || id != _operationId) return false;
             var scroll = FindScrollViewer(ResultsGrid);
             double offset = scroll?.VerticalOffset ?? 0;
-            _results.ReplaceAll(survivors);
-            if (selected is not null && survivors.Contains(selected)) ResultsGrid.SelectedItem = selected;
+            _restoringSelection = true;
+            try
+            {
+                _results.ReplaceAll(survivors);
+                var remaining = new HashSet<SearchResult>(survivors, ReferenceEqualityComparer.Instance);
+                ResultsGrid.ReplaceSelection(selected.Where(remaining.Contains));
+            }
+            finally { _restoringSelection = false; UpdateControls(); }
             await Dispatcher.Yield(DispatcherPriority.Background);
             if (!_closed && id == _operationId) scroll?.ScrollToVerticalOffset(offset);
             return true;
@@ -258,7 +293,7 @@ public partial class MainWindow : Window
 
     private async void Explorer_Click(object sender, RoutedEventArgs e)
     {
-        if (_state != OperationState.Idle || GetActionTarget(sender) is not SearchResult item) return;
+        if (_state != OperationState.Idle || ResultsGrid.SelectedItems.Count != 1 || GetActionTarget(sender) is not SearchResult item) return;
         var (id, cancel) = BeginOperation(OperationState.OpeningExplorer);
         Task work = ReadOnlyWork.RunAsync(async () => { await ExplorerService.ShowAsync(item, cancel.Token); return true; }, cancel.Token);
         StatusTextBlock.Text = "Opening Explorer for: " + item.Name;
@@ -279,16 +314,26 @@ public partial class MainWindow : Window
         DeletionModeComboBox.IsEnabled = !busy;
         SearchButton.IsEnabled = !busy;
         CancelButton.IsEnabled = busy && _state is not OperationState.Cancelling and not OperationState.Closing;
-        bool selected = ResultsGrid.SelectedItem is SearchResult;
-        ExplorerButton.IsEnabled = !busy && selected;
+        var selectedItems = GetSelectedItems();
+        ExplorerButton.IsEnabled = !busy && selectedItems.Length == 1;
+        ExplorerButton.ToolTip = selectedItems.Length > 1 ? "Select one item to show its location in Explorer." : "Show the selected item in Explorer.";
         ExplorerMenuItem.IsEnabled = ExplorerButton.IsEnabled &&
             (!_resultsContextMenuActive || ReferenceEquals(ExplorerMenuItem.Tag, ResultsGrid.SelectedItem));
-        DeleteButton.IsEnabled = !busy && ResultsGrid.SelectedItem is SearchResult { Identity: not null };
+        DeleteButton.IsEnabled = !busy && selectedItems.Any(item => item.Identity is not null);
         DeleteMenuItem.IsEnabled = DeleteButton.IsEnabled &&
-            (!_resultsContextMenuActive || ReferenceEquals(DeleteMenuItem.Tag, ResultsGrid.SelectedItem));
+            (!_resultsContextMenuActive || DeleteMenuItem.Tag is SearchResult[] targets && SameSelection(targets, selectedItems));
         bool recycle = SelectedDeletionMode == DeletionMode.RecycleBin;
         string label = recycle ? "Send to Recycle Bin…" : "Delete Permanently…";
-        if (ResultsGrid.SelectedItem is SearchResult item)
+        if (selectedItems.Length > 1)
+        {
+            label = recycle ? $"Recycle {selectedItems.Length:N0} items…" : $"Delete {selectedItems.Length:N0} items…";
+            int unverified = selectedItems.Count(item => item.Identity is null);
+            SelectionTextBlock.Text = unverified == selectedItems.Length
+                ? $"{selectedItems.Length:N0} items selected. Deletion is disabled because none has a verified identity."
+                : unverified > 0 ? $"{selectedItems.Length:N0} items selected; {unverified:N0} unverified items will be skipped. Review the remaining items before proceeding."
+                : $"{selectedItems.Length:N0} items selected — " + (recycle ? "send to Recycle Bin." : "permanently delete after confirmation.");
+        }
+        else if (ResultsGrid.SelectedItem is SearchResult item)
         {
             label = recycle ? $"Recycle {item.Type}…" : $"Delete {item.Type} Permanently…";
             string action = recycle ? "sent to the Recycle Bin" : "permanently deleted";
@@ -301,10 +346,36 @@ public partial class MainWindow : Window
         DeleteButton.Content = label;
         DeleteMenuItem.Header = label;
         SearchProgress.IsIndeterminate = busy;
-        ResultsGrid.CanUserSortColumns = !busy;
+        ResultsGrid.CanUserSortColumns = true;
     }
 
-    private void ResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateControls();
+    private void SortHeader_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        for (DependencyObject? element = sender as DependencyObject; element is not null; element = VisualTreeHelper.GetParent(element))
+        {
+            if (element is DataGridColumnHeader header) { SortResults(header.Column); return; }
+        }
+    }
+    private void ResultsGrid_Sorting(object sender, DataGridSortingEventArgs e)
+    {
+        e.Handled = true;
+        SortResults(e.Column);
+    }
+    private void SortResults(DataGridColumn? column)
+    {
+        if (_closed || column is null || !ResultsGrid.Columns.Contains(column) || string.IsNullOrEmpty(column.SortMemberPath)) return;
+        var direction = column.SortDirection == ListSortDirection.Ascending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        using (ResultsGrid.Items.DeferRefresh())
+        {
+            ResultsGrid.Items.SortDescriptions.Clear();
+            ResultsGrid.Items.SortDescriptions.Add(new SortDescription(column.SortMemberPath, direction));
+        }
+        foreach (var other in ResultsGrid.Columns) other.SortDirection = other == column ? direction : null;
+        ++_sortRevision;
+    }
+
+    private void ResultsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (!_restoringSelection) UpdateControls(); }
     private void ToggleResultsLayout_Click(object sender, RoutedEventArgs e)
     {
         if (_closed) return;
@@ -348,17 +419,18 @@ public partial class MainWindow : Window
     {
         if (_resultsExpanded || MainLayout is null || HeaderPanel is null || FooterPanel is null || MainLayout.ActualHeight <= 0) return;
         SearchControlsRow.MaxHeight = Math.Max(60, MainLayout.ActualHeight - HeaderPanel.ActualHeight - HeaderPanel.Margin.Top - HeaderPanel.Margin.Bottom
-            - FooterPanel.ActualHeight - FooterPanel.Margin.Top - FooterPanel.Margin.Bottom - 27 - ResultsRegionRow.MinHeight);
+            - FooterPanel.ActualHeight - FooterPanel.Margin.Top - FooterPanel.Margin.Bottom - ResultsSplitter.ActualHeight - ResultsSplitter.Margin.Top - ResultsSplitter.Margin.Bottom - ResultsRegionRow.MinHeight);
     }
     private void ResetResultsSizes_Click(object sender, RoutedEventArgs e)
     {
         if (_closed) return;
         if (_resultsExpanded) ToggleResultsLayout_Click(sender, e);
-        SearchControlsRow.Height = new GridLength(260);
+        SearchControlsRow.Height = new GridLength(190);
         ResultsRegionRow.Height = new GridLength(1, GridUnitType.Star);
         ResultsGrid.Columns[0].Width = new DataGridLength(240);
         ResultsGrid.Columns[1].Width = new DataGridLength(90);
         ResultsGrid.Columns[2].Width = new DataGridLength(1, DataGridLengthUnitType.Star);
+        ResultsGrid.Columns[3].Width = new DataGridLength(190);
         UpdateResizeLimits();
     }
     private void SetLayoutWindowState(WindowState state)
@@ -377,14 +449,30 @@ public partial class MainWindow : Window
             return menu.Tag is SearchResult target && ReferenceEquals(target, ResultsGrid.SelectedItem) ? target : null;
         return ResultsGrid.SelectedItem as SearchResult;
     }
+    private SearchResult[] GetSelectedItems() => ResultsGrid.SelectedItems.Cast<SearchResult>().ToArray();
+    private static bool SameSelection(SearchResult[] left, SearchResult[] right)
+    {
+        if (left.Length != right.Length) return false;
+        var set = new HashSet<SearchResult>(right, ReferenceEqualityComparer.Instance);
+        return left.All(set.Contains);
+    }
+    private SearchResult[] GetActionTargets(object sender)
+    {
+        var selected = GetSelectedItems();
+        if (sender is MenuItem menu)
+            return menu.Tag is SearchResult[] targets && SameSelection(targets, selected) ? targets : [];
+        return selected;
+    }
     private void ResultsGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
         SearchResult? target = e.CursorLeft < 0 && e.CursorTop < 0
             ? ResultsGrid.SelectedItem as SearchResult
             : e.OriginalSource is DependencyObject source &&
                 ItemsControl.ContainerFromElement(ResultsGrid, source) is DataGridRow row ? row.Item as SearchResult : null;
-        ExplorerMenuItem.Tag = target;
-        DeleteMenuItem.Tag = target;
+        var selected = GetSelectedItems();
+        bool hasTarget = target is not null && selected.Any(item => ReferenceEquals(item, target));
+        ExplorerMenuItem.Tag = hasTarget && selected.Length == 1 ? target : null;
+        DeleteMenuItem.Tag = hasTarget ? selected : null;
         _resultsContextMenuActive = true;
         UpdateControls();
     }
@@ -399,12 +487,15 @@ public partial class MainWindow : Window
     {
         if (e.ChangedButton != MouseButton.Left || e.OriginalSource is not DependencyObject source ||
             ItemsControl.ContainerFromElement(ResultsGrid, source) is not DataGridRow row) return;
-        ResultsGrid.SelectedItem = row.Item; e.Handled = true; Explorer_Click(sender, e);
+        ResultsGrid.UnselectAll(); ResultsGrid.SelectedItem = row.Item; e.Handled = true; Explorer_Click(sender, e);
     }
     private void ResultsGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.OriginalSource is DependencyObject source && ItemsControl.ContainerFromElement(ResultsGrid, source) is DataGridRow row)
-        { row.IsSelected = true; row.Focus(); }
+        {
+            if (!row.IsSelected) { ResultsGrid.UnselectAll(); row.IsSelected = true; }
+            row.Focus();
+        }
         // Empty-space layout commands must preserve selection. Their item actions are disabled on opening.
     }
     private void Window_Closing(object? sender, CancelEventArgs e)

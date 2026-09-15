@@ -5,7 +5,12 @@ namespace LumaSearch;
 
 public enum DeletionMode { RecycleBin, Permanent }
 public enum DeletionStatus { Recycled, PermanentlyDeleted, AlreadyMissing, Cancelled, Failed, Unknown }
-public sealed record DeletionOutcome(DeletionStatus Status, string Message);
+public sealed record ItemDeletionOutcome(SearchResult Item, DeletionStatus Status, string Message);
+public sealed record BatchCounts(int Completed, int Missing, int Failed, int Cancelled, int NotAttempted)
+{
+    public int Total => Completed + Missing + Failed + Cancelled + NotAttempted;
+}
+public sealed record DeletionOutcome(DeletionStatus Status, string Message, ItemDeletionOutcome[]? Items = null, BatchCounts? Counts = null);
 
 public static class FileDeletionService
 {

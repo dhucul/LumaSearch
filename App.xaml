@@ -5,14 +5,14 @@
     <Application.Resources>
         <SolidColorBrush x:Key="AccentBrush" Color="#4F46E5" />
         <Style TargetType="TextBox">
-            <Setter Property="Padding" Value="12,9" />
-            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="FontSize" Value="13" />
             <Setter Property="BorderBrush" Value="#CDD3DF" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
         <Style TargetType="Button">
-            <Setter Property="Padding" Value="18,10" />
-            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="12,5" />
+            <Setter Property="MinHeight" Value="32" />
             <Setter Property="Background" Value="#F0F2F8" />
             <Setter Property="Foreground" Value="#25304A" />
             <Setter Property="BorderBrush" Value="#CDD3DF" />

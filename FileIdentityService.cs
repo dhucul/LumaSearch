@@ -32,7 +32,14 @@ public static class FileIdentityService
         var identity = new FileIdentity(id.Volume, id.Low, id.High,
             unchecked((long)(((ulong)info.CreationHigh << 32) | info.CreationLow)));
         return new SearchResult(Path.GetFileName(Path.TrimEndingDirectorySeparator(path)), path,
-            (info.Attributes & 0x10) != 0, (info.Attributes & 0x400) != 0, identity);
+            (info.Attributes & 0x10) != 0, (info.Attributes & 0x400) != 0, identity,
+            ReadTimestamp(info.WriteHigh, info.WriteLow));
+    }
+
+    private static DateTime? ReadTimestamp(uint high, uint low)
+    {
+        try { return DateTime.FromFileTimeUtc(unchecked((long)(((ulong)high << 32) | low))); }
+        catch (ArgumentOutOfRangeException) { return null; }
     }
 
     internal static void EnsureSame(SearchResult expected, SearchResult actual)

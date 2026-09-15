@@ -90,7 +90,7 @@ public static class FileSearchService
                         SearchResult found;
                         try { found = SearchResult.Capture(path); }
                         catch (Exception ex) when (IsFileSystemException(ex))
-                        { found = new SearchResult(Path.GetFileName(path), path, directory, link); }
+                        { found = new SearchResult(Path.GetFileName(path), path, directory, link, LastWriteTimeUtc: TryGetModifiedTime(path)); }
                         await writer.WriteAsync(found, cancellationToken).ConfigureAwait(false);
                         if (++resultCount >= options.MaxResults) { statistics.ReachLimit(); return; }
                     }
@@ -119,6 +119,16 @@ public static class FileSearchService
             AttributesToSkip = 0,
             ReturnSpecialDirectories = false
         }).GetEnumerator();
+
+    private static DateTime? TryGetModifiedTime(string path)
+    {
+        try
+        {
+            DateTime value = File.GetLastWriteTimeUtc(path);
+            return value == DateTime.FromFileTimeUtc(0) ? null : value;
+        }
+        catch (Exception ex) when (IsFileSystemException(ex)) { return null; }
+    }
 
     public static bool IsFileSystemException(Exception exception) => exception is
         IOException or UnauthorizedAccessException or SecurityException or NotSupportedException;
