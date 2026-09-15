@@ -27,6 +27,8 @@ internal static class WpfSmokeTest
         var matchMode = (ComboBox)window.FindName("NameMatchComboBox");
         var selection = (TextBlock)window.FindName("SelectionTextBlock");
         var deletionMode = (ComboBox)window.FindName("DeletionModeComboBox");
+        var clearOutput = (Button)window.FindName("ClearOutputButton");
+        var emptySavedItems = (Button)window.FindName("EmptySavedItemsButton");
         if (!Equals(deletionMode.SelectedValue, DeletionMode.RecycleBin))
             throw new InvalidOperationException("Deletion did not default to the Recycle Bin.");
         path.Text = root;
@@ -57,6 +59,20 @@ internal static class WpfSmokeTest
         if (explorer.IsEnabled || explorerMenu.IsEnabled)
             throw new InvalidOperationException("Explorer navigation stayed enabled without a selection.");
         if (delete.IsEnabled) throw new InvalidOperationException("Clearing selection did not disable deletion.");
+        grid.SelectedIndex = 0;
+        clearOutput.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (grid.Items.Count != 0 || grid.SelectedItems.Count != 0 || delete.IsEnabled || explorer.IsEnabled ||
+            ((TextBlock)window.FindName("CountTextBlock")).Text != "0 results" ||
+            ((TextBlock)window.FindName("StatusTextBlock")).Text != "Output cleared." ||
+            path.Text != root || pattern.Text != "unicode" || !File.Exists(Path.Combine(root, "unicode.txt")))
+            throw new InvalidOperationException("Clear output did not reset the display while preserving search settings and files.");
+        RunSearch(afterStart: () =>
+        {
+            if (clearOutput.IsEnabled || emptySavedItems.IsEnabled)
+                throw new InvalidOperationException("Output and recovery clearing must be disabled during a search.");
+        });
+        if (!clearOutput.IsEnabled || !emptySavedItems.IsEnabled)
+            throw new InvalidOperationException("Output and recovery clearing did not become available after the search.");
 
         void RunSearch(bool cancelImmediately = false, Action? afterStart = null)
         {
@@ -334,12 +350,27 @@ internal static class WpfSmokeTest
             dialogEncoder.Save(dialogOutput);
         }
         dialog.Close();
-        var recoveryDialog = new RecoveryDialog([new RecoveryEntry("record.json", new RecoveryRecord(originals[0], "staging", "",
-            RecoveryState.Staged, DateTime.UtcNow))]);
+        var normalRecovery = new RecoveryEntry("record.json", new RecoveryRecord(originals[0], "staging", "", RecoveryState.Staged, DateTime.UtcNow));
+        var partialRecovery = normalRecovery with { RecordPath = "partial-record.json", Record = normalRecovery.Record with { State = RecoveryState.Emptying } };
+        var recoveryDialog = new RecoveryDialog([normalRecovery, partialRecovery]);
         var recoveryRows = (DataGrid)recoveryDialog.FindName("Entries");
         recoveryRows.SelectedIndex = 0;
         if (!((Button)recoveryDialog.FindName("RestoreAction")).IsEnabled || recoveryDialog.SelectedEntries.Length != 1)
             throw new InvalidOperationException("Recovery selection did not enable restoring the selected item.");
+        var recoveryWarning = (TextBlock)recoveryDialog.FindName("IncompleteWarning");
+        var restoreAction = (Button)recoveryDialog.FindName("RestoreAction");
+        if (recoveryWarning.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Normal recovery displayed an incomplete-content warning.");
+        recoveryRows.SelectedIndex = 1;
+        if (recoveryWarning.Visibility != Visibility.Visible || !restoreAction.IsEnabled
+            || !restoreAction.Content.ToString()!.Contains("remaining") || !partialRecovery.Status.Contains("incomplete"))
+            throw new InvalidOperationException("Partial recovery did not warn before offering to restore remaining contents.");
+        recoveryRows.SelectedIndex = 0;
+        if (recoveryWarning.Visibility != Visibility.Collapsed || restoreAction.Content.ToString() != "Restore selected items")
+            throw new InvalidOperationException("The incomplete-content warning did not clear after selecting a normal recovery item.");
+        recoveryRows.SelectedItems.Add(partialRecovery);
+        if (recoveryWarning.Visibility != Visibility.Visible || recoveryDialog.SelectedEntries.Length != 2)
+            throw new InvalidOperationException("Mixed recovery selection lost its incomplete-content warning.");
         var recoveryContent = (FrameworkElement)recoveryDialog.Content;
         recoveryContent.Measure(new Size(980, 480)); recoveryContent.Arrange(new Rect(0, 0, 980, 480)); recoveryContent.UpdateLayout();
         if (previewPath is not null)

@@ -12,7 +12,7 @@ using Microsoft.Win32;
 
 namespace LumaSearch;
 
-public enum OperationState { Idle, Searching, PreparingDelete, Deleting, OpeningExplorer, Cancelling, Closing, LoadingRecovery, Restoring }
+public enum OperationState { Idle, Searching, PreparingDelete, Deleting, OpeningExplorer, Cancelling, Closing, LoadingRecovery, Restoring, EmptyingRecovery }
 
 public partial class MainWindow : Window
 {
@@ -173,6 +173,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ClearOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state != OperationState.Idle) return;
+        ++_operationId;
+        ResultsGrid.ContextMenu.IsOpen = false;
+        ExplorerMenuItem.Tag = null;
+        DeleteMenuItem.Tag = null;
+        _resultsContextMenuActive = false;
+        ResultsGrid.UnselectAll();
+        _results.Clear();
+        CountTextBlock.Text = "0 results";
+        StatusTextBlock.Text = "Output cleared.";
+        SearchProgress.Value = 0;
+        UpdateControls();
+    }
+
     public static string ProgressPhase(OperationState state, string fallback) => state switch
     { OperationState.Cancelling => "Cancelling", OperationState.Closing => "Closing", _ => fallback };
     private void SetProgress(ScanStatistics stats, TimeSpan elapsed, string phase)
@@ -185,12 +201,17 @@ public partial class MainWindow : Window
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         if (_state is OperationState.Idle or OperationState.Closing) return;
-        bool restoring = _state == OperationState.Restoring;
+        string action = _state switch
+        {
+            OperationState.Restoring => "restoration",
+            OperationState.EmptyingRecovery => "emptying saved items",
+            _ => "deletion"
+        };
         _state = OperationState.Cancelling;
         if (_deletionJob is not null)
         {
             _deletionJob.RequestCancel();
-            StatusTextBlock.Text = $"Stopping {(restoring ? "restoration" : "deletion")} after the current filesystem operation. You may close this window; its outcome will be saved.";
+            StatusTextBlock.Text = $"Stopping {action} after the current filesystem operation. You may close this window; its outcome will be saved.";
         }
         else { _operationCancellation?.Cancel(); StatusTextBlock.Text = "Cancelling…"; }
         UpdateControls();
@@ -342,6 +363,55 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void EmptySavedItems_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state != OperationState.Idle) return;
+        var (id, cancel) = BeginOperation(OperationState.LoadingRecovery);
+        StatusTextBlock.Text = "Loading saved items…";
+        var listing = ReadOnlyWork.RunAsync(() => new RecoveryStorage().List(), cancel.Token);
+        try
+        {
+            var entries = await listing.WaitAsync(cancel.Token);
+            if (_closed) return;
+            if (entries.Length == 0) { StatusTextBlock.Text = "There are no saved items to empty."; return; }
+            if (MessageBox.Show(this,
+                $"Permanently delete {entries.Length:N0} saved items recorded by LumaSearch for your Windows account?\n\n"
+                + "This includes their contents in protected recovery storage and the Recycle Bin. "
+                + "Items already restored to their original locations and items recycled by other apps will be kept.\n\n"
+                + "This cannot be undone.", "Empty LumaSearch saved items?",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+            { StatusTextBlock.Text = "Emptying cancelled; no changes made."; return; }
+            _state = OperationState.EmptyingRecovery;
+            UpdateControls();
+            StatusTextBlock.Text = $"Emptying {entries.Length:N0} saved items…";
+            _deletionJob = await DeletionJob.StartAsync(entries.Select(item => item.Record.Original).ToArray(),
+                DeletionMode.Permanent, cancel.Token, recoveryRecords: entries.Select(item => item.RecordPath).ToArray(), emptyRecovery: true);
+            if (_closed) { _deletionJob.RequestCancel(); return; }
+            var outcome = await _deletionJob.WaitAsync();
+            if (_closed) return;
+            StatusTextBlock.Text = "Saved items: " + outcome.Message;
+            if (outcome.Status is DeletionStatus.Failed or DeletionStatus.Unknown or DeletionStatus.Pending)
+            {
+                string details = string.Join("\n\n", (outcome.Items ?? [])
+                    .Where(item => item.Status is DeletionStatus.Failed or DeletionStatus.Unknown or DeletionStatus.Pending)
+                    .Take(10).Select(item => item.Item.Name + "\n" + item.Message));
+                MessageBox.Show(this, outcome.Message + "\n\n" + details, "Some saved items remain",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (OperationCanceledException) { if (!_closed) StatusTextBlock.Text = "Emptying cancelled before a worker started."; }
+        catch (Exception ex)
+        {
+            if (!_closed) { StatusTextBlock.Text = "Saved items could not be emptied."; MessageBox.Show(this, ex.Message, "Cannot empty saved items", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        }
+        finally
+        {
+            ReadOnlyWork.Observe(listing, cancel);
+            _deletionJob?.Dispose(); _deletionJob = null;
+            EndOperation(id);
+        }
+    }
+
     private static ScrollViewer? FindScrollViewer(DependencyObject parent)
     {
         if (parent is ScrollViewer viewer) return viewer;
@@ -373,6 +443,8 @@ public partial class MainWindow : Window
         DeletionModeComboBox.IsEnabled = !busy;
         SearchButton.IsEnabled = !busy;
         RestoreDeletedButton.IsEnabled = !busy;
+        ClearOutputButton.IsEnabled = !busy;
+        EmptySavedItemsButton.IsEnabled = !busy;
         CancelButton.IsEnabled = busy && _state is not OperationState.Cancelling and not OperationState.Closing;
         var selectedItems = GetSelectedItems();
         ExplorerButton.IsEnabled = !busy && selectedItems.Length == 1;

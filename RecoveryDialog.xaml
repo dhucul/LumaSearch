@@ -4,7 +4,7 @@
         Title="Restore deleted items" Width="980" Height="520" MinWidth="760" MinHeight="340"
         WindowStartupLocation="CenterOwner" Background="#F5F6FA" Foreground="#202940" FontFamily="Segoe UI" FontSize="14">
     <Grid Margin="22" Background="#F5F6FA">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <TextBlock Text="Restore to original location" FontSize="22" FontWeight="SemiBold"/>
         <TextBlock Grid.Row="1" Margin="0,12,0,16" TextWrapping="Wrap"
                    Text="Select the items to restore. Their original parent folders must exist. Existing files and folders will never be overwritten. Items removed when the Recycle Bin was emptied may no longer be available."/>
@@ -25,7 +25,10 @@
                 </DataGridTextColumn>
             </DataGrid.Columns>
         </DataGrid>
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <TextBlock x:Name="IncompleteWarning" Grid.Row="3" Visibility="Collapsed" Foreground="#B42338" TextWrapping="Wrap" Margin="0,12,0,0"
+                   AutomationProperties.LiveSetting="Polite"
+                   Text="Emptying already started for some selected items. Contents may be permanently missing. Only remaining contents can be restored."/>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
             <Button x:Name="CancelAction" Content="Cancel" IsCancel="True" MinWidth="100" Margin="0,0,12,0"/>
             <Button x:Name="RestoreAction" Content="Restore selected items" IsEnabled="False" Click="Restore_Click" MinWidth="180"/>
         </StackPanel>

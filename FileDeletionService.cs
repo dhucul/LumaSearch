@@ -6,7 +6,9 @@ namespace LumaSearch;
 public enum DeletionMode { RecycleBin, Permanent }
 // Append values: numeric statuses are also stored in journals from previous releases.
 public enum DeletionStatus { Recycled, PermanentlyDeleted, AlreadyMissing, Cancelled, Failed, Unknown, Pending, NotStarted, Restored }
-public sealed record ItemDeletionOutcome(SearchResult Item, DeletionStatus Status, string Message);
+public sealed record RecoveryCleanup(string RecordPath, string? MetadataPath = null);
+public sealed record ItemDeletionOutcome(SearchResult Item, DeletionStatus Status, string Message,
+    string? Warning = null, RecoveryCleanup? RecoveryCleanup = null);
 public sealed record BatchCounts(int Completed, int Missing, int Failed, int Cancelled, int NotAttempted, int Pending = 0)
 {
     public int Total => Completed + Missing + Failed + Cancelled + NotAttempted + Pending;
@@ -35,6 +37,12 @@ public static class FileDeletionService
         var current = ValidateTarget(item);
         if (current is null) return Missing();
         using var pinned = PinnedPath.Open(item);
+        return DeletePinned(pinned, token);
+    }
+
+    internal static DeletionOutcome DeletePinned(PinnedPath pinned, CancellationToken token)
+    {
+        var item = pinned.Item;
         bool removed = DeletePinnedTree(pinned.Handle, pinned.Item, token);
         if (!removed) return new(DeletionStatus.Pending,
             "Removal is not yet confirmed: " + item.Name + ". Another program may still have a file open. "

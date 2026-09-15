@@ -4,7 +4,8 @@ using System.Text.Json;
 
 namespace LumaSearch;
 
-public sealed record DeletionRequest(SearchResult Item, DeletionMode Mode, SearchResult[]? Items = null, string[]? RecoveryRecords = null);
+public sealed record DeletionRequest(SearchResult Item, DeletionMode Mode, SearchResult[]? Items = null, string[]? RecoveryRecords = null,
+    bool EmptyRecovery = false);
 
 public sealed class DeletionJob : IDisposable
 {
@@ -25,13 +26,15 @@ public sealed class DeletionJob : IDisposable
         string? journalRoot = null, bool useManagedTestHost = false) => StartAsync([item], mode, token, journalRoot, useManagedTestHost);
 
     public static async Task<DeletionJob> StartAsync(SearchResult[] selection, DeletionMode mode, CancellationToken token,
-        string? journalRoot = null, bool useManagedTestHost = false, string[]? recoveryRecords = null)
+        string? journalRoot = null, bool useManagedTestHost = false, string[]? recoveryRecords = null, bool emptyRecovery = false)
     {
         var items = recoveryRecords is null ? BatchDeletion.Plan(selection) : selection.ToArray();
         if (items.Length == 0) throw new ArgumentException("Select at least one item.");
         if (recoveryRecords is not null && recoveryRecords.Length != items.Length) throw new ArgumentException("Recovery selections must match their records.");
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
-        string request = JsonSerializer.Serialize(new DeletionRequest(items[0], mode, items, recoveryRecords));
+        if (emptyRecovery && (recoveryRecords is null || mode != DeletionMode.Permanent))
+            throw new ArgumentException("Emptying saved items requires recovery records and permanent deletion mode.");
+        string request = JsonSerializer.Serialize(new DeletionRequest(items[0], mode, items, recoveryRecords, emptyRecovery));
         string directory = Path.Combine(journalRoot ?? JournalRoot, Guid.NewGuid().ToString("N"));
         string preparing = directory + ".preparing";
         // Preparation is never executable; only a committed request delivered through the pipe can start work.
@@ -161,7 +164,9 @@ public sealed class DeletionJob : IDisposable
                 lastKnown = partial; // Update memory before attempting the fallible write.
                 await write(partial);
             }
-            outcome = request.RecoveryRecords is null
+            outcome = request.EmptyRecovery
+                ? await new RecoveryStorage().EmptyBatchAsync(request, token, Checkpoint)
+                : request.RecoveryRecords is null
                 ? await BatchDeletion.ExecuteAsync(request.Items ?? [request.Item], request.Mode, token, Checkpoint)
                 : await new RecoveryStorage().RestoreBatchAsync(request, token, Checkpoint);
         }
@@ -212,9 +217,10 @@ public sealed class DeletionJob : IDisposable
             { outcome = new(DeletionStatus.Unknown, "The saved outcome could not be read: " + ex.Message); }
             if (outcome.Items is { Length: > 0 } pendingItems && pendingItems.Any(item => item.Status == DeletionStatus.Pending))
             {
-                var checkedItems = pendingItems.Select(item => item.Status == DeletionStatus.Pending && FileDeletionService.IsDefinitelyMissing(item.Item.FullPath)
-                    ? item with { Status = DeletionStatus.AlreadyMissing, Message = "The previously pending target is no longer at its recorded location." } : item).ToArray();
+                var checkedItems = pendingItems.Select(RecheckPending).ToArray();
                 outcome = BatchDeletion.Summarize(outcome.Counts?.Total ?? checkedItems.Length, checkedItems, DeletionMode.Permanent);
+                if (checkedItems.Any(item => item.Status == DeletionStatus.Pending && item.RecoveryCleanup is not null))
+                    outcome = outcome with { Message = outcome.Message + " Saved-item cleanup is unfinished. Use Empty saved items… to finish it." };
             }
             latest ??= outcome.Message;
             if (outcome.Status is DeletionStatus.Unknown or DeletionStatus.Pending ||
@@ -229,6 +235,18 @@ public sealed class DeletionJob : IDisposable
                 + string.Join("\n", unresolved.Take(10))
                 + (unresolved.Count > 10 ? $"\n{unresolved.Count - 10:N0} more operations remain recorded in history." : "");
         return latest is null ? null : "Previous deletion: " + latest;
+    }
+
+    private static ItemDeletionOutcome RecheckPending(ItemDeletionOutcome item)
+    {
+        if (item.Status != DeletionStatus.Pending || !FileDeletionService.IsDefinitelyMissing(item.Item.FullPath)) return item;
+        if (item.RecoveryCleanup is { } cleanup &&
+            (!FileDeletionService.IsDefinitelyMissing(cleanup.RecordPath) ||
+             (cleanup.MetadataPath is not null && !FileDeletionService.IsDefinitelyMissing(cleanup.MetadataPath))))
+            return item;
+        return item with { Status = DeletionStatus.AlreadyMissing, Message = item.RecoveryCleanup is null
+            ? "The previously pending target is no longer at its recorded location."
+            : "The saved item, recovery record, and recorded Recycle Bin metadata have been removed." };
     }
     public void Dispose()
     {

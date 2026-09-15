@@ -5,14 +5,19 @@ using Microsoft.Win32.SafeHandles;
 
 namespace LumaSearch;
 
-public enum RecoveryState { Prepared, Staged, Recycled, Restored, Unavailable }
+// Append values: recovery states are persisted numerically in existing records.
+public enum RecoveryState { Prepared, Staged, Recycled, Restored, Unavailable, Emptying }
 public sealed record RecoveryRecord(SearchResult Original, string StagedPath, string SecurityDescriptor,
-    RecoveryState State, DateTime CreatedUtc, string? RecycledPath = null, string? Detail = null);
+    RecoveryState State, DateTime CreatedUtc, string? RecycledPath = null, string? Detail = null,
+    SearchResult? EmptyingMetadata = null);
 public sealed record RecoveryEntry(string RecordPath, RecoveryRecord Record)
 {
     public string Name => Record.Original.Name;
     public string OriginalPath => Record.Original.FullPath;
-    public string Status => Record.State switch
+    // Older interrupted emptying records may have only the metadata checkpoint.
+    public bool MayBeIncomplete => Record.State == RecoveryState.Emptying ||
+        (Record.State != RecoveryState.Restored && Record.EmptyingMetadata is not null);
+    public string Status => MayBeIncomplete ? "Possibly incomplete after emptying" : Record.State switch
     {
         RecoveryState.Prepared => "Interrupted preparation",
         RecoveryState.Staged => "Ready to restore",
@@ -23,7 +28,7 @@ public sealed record RecoveryEntry(string RecordPath, RecoveryRecord Record)
     public DateTime? DateRecorded => Record.CreatedUtc == DateTime.MinValue ? null : Record.CreatedUtc.ToLocalTime();
 }
 
-internal sealed class RecoveryStorage
+internal sealed partial class RecoveryStorage
 {
     private readonly string? _testRoot;
     internal RecoveryStorage(string? testRoot = null) { _testRoot = testRoot; }
@@ -182,7 +187,10 @@ internal sealed class RecoveryStorage
         // Restore permissions only after the object is back at the verified destination.
         RecoverySecurity.RestoreLabel(source.Handle, Convert.FromBase64String(entry.Record.SecurityDescriptor));
         WriteRecord(entry with { Record = entry.Record with { State = RecoveryState.Restored } });
-        return new(original, DeletionStatus.Restored, "Restored to: " + original.FullPath);
+        return new(original, DeletionStatus.Restored, "Restored to: " + original.FullPath,
+            Warning: entry.MayBeIncomplete
+                ? "Some contents may have been permanently deleted by an earlier emptying operation. Only remaining contents were restored."
+                : null);
     }
 
     internal async Task<DeletionOutcome> RestoreBatchAsync(DeletionRequest request, CancellationToken token, Func<DeletionOutcome, Task> progress)

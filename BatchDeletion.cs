@@ -109,6 +109,8 @@ public static class BatchDeletion
             + (pending > 0 ? " Close open files and refresh the search to confirm removal; folders may be partly processed." : "");
         if (!restoring && mode == DeletionMode.RecycleBin && (failures > 0 || interrupted > 0))
             detail += " Items may be in protected recovery storage. Use Restore deleted items in LumaSearch.";
+        string warnings = string.Join(" ", completed.Select(item => item.Warning).Where(warning => !string.IsNullOrWhiteSpace(warning)).Distinct());
+        if (warnings.Length > 0) detail += " Warning: " + warnings;
         return new(status, $"{done:N0} targets {verb}; {missing:N0} already missing; {failures:N0} failed/unconfirmed; "
             + $"{interrupted:N0} cancelled/possibly partial; {notAttempted:N0} not attempted; {pending:N0} awaiting removal confirmation." + detail, completed, counts);
     }
