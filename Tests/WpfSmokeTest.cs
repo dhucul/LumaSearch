@@ -334,6 +334,22 @@ internal static class WpfSmokeTest
             dialogEncoder.Save(dialogOutput);
         }
         dialog.Close();
+        var recoveryDialog = new RecoveryDialog([new RecoveryEntry("record.json", new RecoveryRecord(originals[0], "staging", "",
+            RecoveryState.Staged, DateTime.UtcNow))]);
+        var recoveryRows = (DataGrid)recoveryDialog.FindName("Entries");
+        recoveryRows.SelectedIndex = 0;
+        if (!((Button)recoveryDialog.FindName("RestoreAction")).IsEnabled || recoveryDialog.SelectedEntries.Length != 1)
+            throw new InvalidOperationException("Recovery selection did not enable restoring the selected item.");
+        var recoveryContent = (FrameworkElement)recoveryDialog.Content;
+        recoveryContent.Measure(new Size(980, 480)); recoveryContent.Arrange(new Rect(0, 0, 980, 480)); recoveryContent.UpdateLayout();
+        if (previewPath is not null)
+        {
+            var recoveryBitmap = new RenderTargetBitmap(980, 480, 96, 96, PixelFormats.Pbgra32);
+            recoveryBitmap.Render(recoveryContent);
+            var recoveryEncoder = new PngBitmapEncoder(); recoveryEncoder.Frames.Add(BitmapFrame.Create(recoveryBitmap));
+            using var recoveryOutput = File.Create(Path.ChangeExtension(previewPath, ".recovery.png")); recoveryEncoder.Save(recoveryOutput);
+        }
+        recoveryDialog.Close();
         matchMode.SelectedValue = NameMatchMode.Wildcard;
         pattern.Text = "*.txt";
         RunSearch();

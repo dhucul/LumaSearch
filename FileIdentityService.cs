@@ -14,10 +14,19 @@ public static class FileIdentityService
         return Read(handle, path);
     }
 
-    internal static SafeFileHandle Open(string path, bool deleteAccess = false, bool pin = false)
+    internal static SearchResult CaptureForSearch(string path)
     {
-        var handle = CreateFileW(path, 0x80u | (deleteAccess ? 0x10000u : 0),
-            pin ? 3u : 7u, IntPtr.Zero, 3, 0x02000000 | 0x00200000 | 0x01000000, IntPtr.Zero);
+        path = Path.GetFullPath(path);
+        using var handle = Open(path);
+        return Read(handle, path, requireIdentity: false);
+    }
+
+    internal static SafeFileHandle Open(string path, bool deleteAccess = false, bool pin = false,
+        bool readData = false, bool denyWrite = false, bool securityAccess = false)
+    {
+        var handle = CreateFileW(path, 0x80u | (deleteAccess ? 0x10000u : 0) | (readData ? 0x80000000u : 0) | (securityAccess ? 0xE0000u : 0),
+            pin ? (denyWrite ? 1u : 3u) : 7u, IntPtr.Zero, 3,
+            0x02000000u | 0x00200000u | 0x01000000u | (readData ? 0x40000000u : 0), IntPtr.Zero);
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastWin32Error();
         handle.Dispose();
@@ -25,12 +34,13 @@ public static class FileIdentityService
         throw new IOException("Cannot open filesystem item.");
     }
 
-    internal static SearchResult Read(SafeFileHandle handle, string path)
+    internal static SearchResult Read(SafeFileHandle handle, string path, bool requireIdentity = true)
     {
         if (!GetFileInformationByHandle(handle, out var info)) ThrowFileError(Marshal.GetLastWin32Error(), path);
-        if (!GetFileInformationByHandleEx(handle, 18, out var id, 24)) ThrowFileError(Marshal.GetLastWin32Error(), path);
-        var identity = new FileIdentity(id.Volume, id.Low, id.High,
-            unchecked((long)(((ulong)info.CreationHigh << 32) | info.CreationLow)));
+        bool hasIdentity = GetFileInformationByHandleEx(handle, 18, out var id, 24);
+        if (!hasIdentity && requireIdentity) ThrowFileError(Marshal.GetLastWin32Error(), path);
+        FileIdentity? identity = hasIdentity ? new FileIdentity(id.Volume, id.Low, id.High,
+            unchecked((long)(((ulong)info.CreationHigh << 32) | info.CreationLow))) : null;
         return new SearchResult(Path.GetFileName(Path.TrimEndingDirectorySeparator(path)), path,
             (info.Attributes & 0x10) != 0, (info.Attributes & 0x400) != 0, identity,
             ReadTimestamp(info.WriteHigh, info.WriteLow));
@@ -47,6 +57,12 @@ public static class FileIdentityService
         if (expected.Identity is null) throw new IOException("This result has no verified file identity. Search again before deleting it.");
         if (expected.Identity != actual.Identity || expected.IsDirectory != actual.IsDirectory || expected.IsLink != actual.IsLink)
             throw new IOException("This item has been replaced or changed since the search. Nothing was deleted. Search again.");
+    }
+
+    internal static uint LinkCount(SafeFileHandle handle)
+    {
+        if (!GetFileInformationByHandle(handle, out var info)) ThrowFileError(Marshal.GetLastWin32Error(), "Selected item");
+        return info.Links;
     }
 
     internal static void MarkDeleted(SafeFileHandle handle, string path)
@@ -90,7 +106,8 @@ internal sealed class PinnedPath : IDisposable
     internal SafeFileHandle Handle { get; private set; } = null!;
     internal SearchResult Item { get; private set; } = null!;
 
-    internal static PinnedPath Open(SearchResult expected)
+    internal static PinnedPath Open(SearchResult expected, bool deleteAccess = true, bool denyWrite = true, bool securityAccess = false,
+        bool requireIdentity = true)
     {
         var pinned = new PinnedPath();
         try
@@ -104,14 +121,16 @@ internal sealed class PinnedPath : IDisposable
             }
             foreach (string path in ancestors)
             {
-                var handle = FileIdentityService.Open(path, pin: true);
+                var handle = FileIdentityService.Open(path, pin: true, denyWrite: true);
                 pinned._parents.Add(handle);
-                if (FileIdentityService.Read(handle, path).IsLink)
-                    throw new IOException("Deletion through a linked parent directory is not supported. Search the target's physical location instead.");
+                if (FileIdentityService.Read(handle, path, requireIdentity: false).IsLink)
+                    throw new IOException("Operations through a linked parent directory are not supported. Choose the target's physical location instead.");
             }
-            pinned.Handle = FileIdentityService.Open(expected.FullPath, deleteAccess: true, pin: true);
-            pinned.Item = FileIdentityService.Read(pinned.Handle, expected.FullPath);
-            FileIdentityService.EnsureSame(expected, pinned.Item);
+            pinned.Handle = FileIdentityService.Open(expected.FullPath, deleteAccess: deleteAccess, pin: true, denyWrite: denyWrite, securityAccess: securityAccess);
+            pinned.Item = FileIdentityService.Read(pinned.Handle, expected.FullPath, requireIdentity);
+            if (requireIdentity || expected.Identity is not null) FileIdentityService.EnsureSame(expected, pinned.Item);
+            else if (expected.IsDirectory != pinned.Item.IsDirectory || expected.IsLink != pinned.Item.IsLink)
+                throw new IOException("The item's type changed while opening it.");
             return pinned;
         }
         catch { pinned.Dispose(); throw; }

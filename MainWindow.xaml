@@ -114,7 +114,7 @@
         <Grid Grid.Row="3">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" MinHeight="70" /></Grid.RowDefinitions>
         <Grid Grid.Row="0" Margin="0,6,0,8">
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Button x:Name="SearchButton" Content="Search" Width="120" Background="{StaticResource AccentBrush}" BorderBrush="{StaticResource AccentBrush}" Foreground="White" FontWeight="SemiBold" IsDefault="True" Click="Search_Click" />
             <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Margin="10,0,0,0" IsEnabled="False" Click="Cancel_Click" />
@@ -124,6 +124,8 @@
             <Button x:Name="DeleteButton" Grid.Column="4" Content="Delete Selected Item" Foreground="#B42338" IsEnabled="False" Click="Delete_Click" />
             <Button x:Name="RestoreLayoutButton" Grid.Row="1" Grid.ColumnSpan="2" Content="Restore normal layout"
                     Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,6,0,0" Click="ToggleResultsLayout_Click" />
+            <Button x:Name="RestoreDeletedButton" Grid.Row="2" Grid.ColumnSpan="5" HorizontalAlignment="Left" Content="Restore deleted items…" Click="RestoreDeleted_Click" Margin="0,6,0,0"
+                    ToolTip="Restore items recycled by LumaSearch to their original locations. Existing items are never overwritten." />
             <StackPanel Grid.Row="1" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
                 <Label Target="{Binding ElementName=DeletionModeComboBox}" Content="Delete action:" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <ComboBox x:Name="DeletionModeComboBox" Width="225" SelectedIndex="0" SelectedValuePath="Tag"

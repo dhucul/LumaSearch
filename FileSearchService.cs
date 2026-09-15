@@ -3,6 +3,7 @@ using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
+using Microsoft.Win32.SafeHandles;
 
 namespace LumaSearch;
 
@@ -27,21 +28,27 @@ public static class FileSearchService
             RegexOptions.NonBacktracking, TimeSpan.FromSeconds(2));
     }
 
-    public static async Task ScanAsync(SearchOptions options, ChannelWriter<SearchResult> writer,
-        ScanStatistics statistics, CancellationToken cancellationToken)
+    public static Task ScanAsync(SearchOptions options, ChannelWriter<SearchResult> writer,
+        ScanStatistics statistics, CancellationToken cancellationToken) => ScanAsync(options, writer, statistics, cancellationToken, null);
+
+    internal static async Task ScanAsync(SearchOptions options, ChannelWriter<SearchResult> writer,
+        ScanStatistics statistics, CancellationToken cancellationToken, Action<SearchResult>? contentOpened)
     {
-        var enumerators = new Stack<IEnumerator<string>>();
+        var enumerators = new Stack<DirectoryCursor>();
         try
         {
             var matcher = CreateNameMatcher(options.NamePattern, options.MatchMode);
             if (options.MaxResults is < 1 or > 100_000) throw new ArgumentException("Result limit must be between 1 and 100,000.");
             cancellationToken.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(options.StartingDirectory) & FileAttributes.Directory) == 0)
-                throw new ArgumentException("The starting path must be a directory.");
+            var root = FileIdentityService.CaptureForSearch(options.StartingDirectory);
+            if (!root.IsDirectory || root.IsLink)
+                throw new ArgumentException("Choose a physical starting directory; linked directories are not followed.");
+            // Keep every path component stable for the lifetime of the traversal.
+            using var pinnedRoot = PinnedPath.Open(root, deleteAccess: false, requireIdentity: false);
             int resultCount = 0;
             var textMatcher = string.IsNullOrEmpty(options.TargetText) ? null : new LineTextMatcher(options.TargetText);
             // Explicitly selected starting directories are searched even when hidden.
-            enumerators.Push(OpenDirectory(options.StartingDirectory));
+            enumerators.Push(DirectoryCursor.Open(root.FullPath, root));
             while (enumerators.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -80,7 +87,17 @@ public static class FileSearchService
                         if (link) { statistics.Skip(); matches = false; }
                         else
                         {
-                            try { matches = await textMatcher.ContainsAsync(path, cancellationToken).ConfigureAwait(false); }
+                            try
+                            {
+                                var contentMatch = await textMatcher.MatchAsync(path, cancellationToken, contentOpened).ConfigureAwait(false);
+                                if (contentMatch is not null)
+                                {
+                                    await writer.WriteAsync(contentMatch, cancellationToken).ConfigureAwait(false);
+                                    if (++resultCount >= options.MaxResults) { statistics.ReachLimit(); return; }
+                                }
+                                // The content branch has already emitted the identity belonging to its read handle.
+                                matches = false;
+                            }
                             catch (Exception ex) when (IsFileSystemException(ex) || ex is DecoderFallbackException)
                             { statistics.Skip(); matches = false; }
                         }
@@ -88,9 +105,10 @@ public static class FileSearchService
                     if (matches)
                     {
                         SearchResult found;
-                        try { found = SearchResult.Capture(path); }
+                        try { found = FileIdentityService.CaptureForSearch(path); }
                         catch (Exception ex) when (IsFileSystemException(ex))
                         { found = new SearchResult(Path.GetFileName(path), path, directory, link, LastWriteTimeUtc: TryGetModifiedTime(path)); }
+                        if (found.IsDirectory != directory || found.IsLink != link) { statistics.Skip(); continue; }
                         await writer.WriteAsync(found, cancellationToken).ConfigureAwait(false);
                         if (++resultCount >= options.MaxResults) { statistics.ReachLimit(); return; }
                     }
@@ -99,7 +117,7 @@ public static class FileSearchService
                 // Depth-first iteration avoids call-stack overflow and never follows junctions/symlinks.
                 if (directory && !link)
                 {
-                    try { enumerators.Push(OpenDirectory(path)); }
+                    try { enumerators.Push(DirectoryCursor.Open(path)); }
                     catch (Exception ex) when (IsFileSystemException(ex)) { statistics.Skip(); }
                 }
             }
@@ -111,14 +129,32 @@ public static class FileSearchService
         }
     }
 
-    private static IEnumerator<string> OpenDirectory(string path) =>
-        Directory.EnumerateFileSystemEntries(path, "*", new EnumerationOptions
+    // The no-follow handle is retained until enumeration ends. Denying write and delete
+    // sharing prevents both replacement and conversion of this directory to a junction.
+    private sealed class DirectoryCursor : IDisposable
+    {
+        private readonly SafeFileHandle _handle;
+        private readonly IEnumerator<string> _entries;
+        private DirectoryCursor(SafeFileHandle handle, IEnumerator<string> entries)
+        { _handle = handle; _entries = entries; }
+        internal string Current => _entries.Current;
+        internal bool MoveNext() => _entries.MoveNext();
+        internal static DirectoryCursor Open(string path, SearchResult? expected = null)
         {
-            RecurseSubdirectories = false,
-            IgnoreInaccessible = false,
-            AttributesToSkip = 0,
-            ReturnSpecialDirectories = false
-        }).GetEnumerator();
+            var handle = FileIdentityService.Open(path, pin: true, denyWrite: true);
+            try
+            {
+                var current = FileIdentityService.Read(handle, path, requireIdentity: false);
+                if (!current.IsDirectory || current.IsLink) throw new IOException("The directory changed or became a link during the search.");
+                if (expected?.Identity is not null) FileIdentityService.EnsureSame(expected, current);
+                var entries = Directory.EnumerateFileSystemEntries(path, "*", new EnumerationOptions
+                { RecurseSubdirectories = false, IgnoreInaccessible = false, AttributesToSkip = 0, ReturnSpecialDirectories = false }).GetEnumerator();
+                return new(handle, entries);
+            }
+            catch { handle.Dispose(); throw; }
+        }
+        public void Dispose() { _entries.Dispose(); _handle.Dispose(); }
+    }
 
     private static DateTime? TryGetModifiedTime(string path)
     {
@@ -154,10 +190,13 @@ public static class FileSearchService
             }
         }
 
-        public async Task<bool> ContainsAsync(string path, CancellationToken cancellationToken)
+        public async Task<SearchResult?> MatchAsync(string path, CancellationToken cancellationToken, Action<SearchResult>? contentOpened)
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete, 16 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
+            using var handle = FileIdentityService.Open(path, pin: true, readData: true, denyWrite: true);
+            var result = FileIdentityService.Read(handle, path, requireIdentity: false);
+            if (result.IsDirectory || result.IsLink) throw new IOException("The file changed or became a link during the search.");
+            contentOpened?.Invoke(result);
+            using var stream = new FileStream(handle, FileAccess.Read, 16 * 1024, isAsync: true);
             using var reader = new StreamReader(stream, new UTF8Encoding(false, true),
                 detectEncodingFromByteOrderMarks: true, bufferSize: 16 * 1024);
             char[] buffer = new char[8192];
@@ -166,7 +205,7 @@ public static class FileSearchService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 int count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
-                if (count == 0) return false;
+                if (count == 0) return null;
                 for (int i = 0; i < count; i++)
                 {
                     char value = buffer[i];
@@ -174,7 +213,7 @@ public static class FileSearchService
                     value = char.ToUpperInvariant(value);
                     while (matched > 0 && value != _pattern[matched]) matched = _prefix[matched - 1];
                     if (value == _pattern[matched]) matched++;
-                    if (matched == _pattern.Length) return true;
+                    if (matched == _pattern.Length) return result;
                 }
             }
         }

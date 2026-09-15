@@ -110,7 +110,7 @@ internal static class AuditRegressionTests
             CancellationToken.None, Path.Combine(root, "journals"), useManagedTestHost: true);
         cancelledJob.RequestCancel();
         var stoppedOutcome = await cancelledJob.WaitAsync().WaitAsync(TimeSpan.FromSeconds(15));
-        check((stoppedOutcome.Status == DeletionStatus.Cancelled && File.Exists(cancelPath)) ||
+        check((stoppedOutcome.Status is DeletionStatus.Cancelled or DeletionStatus.NotStarted && File.Exists(cancelPath)) ||
             (stoppedOutcome.Status == DeletionStatus.PermanentlyDeleted && !File.Exists(cancelPath)),
             "worker cancellation preserves a truthful terminal outcome");
     }

@@ -16,7 +16,7 @@ public partial class BatchDeleteDialog : Window
         Heading.Text = recycle ? $"Recycle {preflight.Eligible.Length:N0} verified targets?" : $"Permanently delete {preflight.Eligible.Length:N0} verified targets?";
         Scope.Text = $"{selectedCount:N0} rows selected: {preflight.Eligible.Length:N0} verified targets, {preflight.Unavailable.Length:N0} skipped, {preflight.CoveredCount:N0} included with a selected parent.\n"
             + "Folders include all their contents; links affect only the link. Parent folders and other items are left in place.\n"
-            + (recycle ? "Successfully recycled items can be restored until the Recycle Bin is emptied." : "Permanent deletion cannot be undone.");
+            + (recycle ? "Use Restore deleted items in LumaSearch to restore original locations before the Recycle Bin is emptied. Windows Restore returns items to protected staging." : "Permanent deletion cannot be undone.");
         Targets.ItemsSource = preflight.Eligible.Select(item => new BatchTargetPreview(item.Name, item.Type, item.FullPath,
             recycle ? "Recycle" : "Delete permanently", item.IsLink ? "Link only; target stays." : item.IsDirectory ? "Includes all folder contents." : "Only this file."))
             .Concat(preflight.Unavailable.Select(item => new BatchTargetPreview(item.Item.Name, item.Item.Type, item.Item.FullPath,

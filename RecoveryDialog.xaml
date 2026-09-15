@@ -1,0 +1,33 @@
+<Window x:Class="LumaSearch.RecoveryDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Restore deleted items" Width="980" Height="520" MinWidth="760" MinHeight="340"
+        WindowStartupLocation="CenterOwner" Background="#F5F6FA" Foreground="#202940" FontFamily="Segoe UI" FontSize="14">
+    <Grid Margin="22" Background="#F5F6FA">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Text="Restore to original location" FontSize="22" FontWeight="SemiBold"/>
+        <TextBlock Grid.Row="1" Margin="0,12,0,16" TextWrapping="Wrap"
+                   Text="Select the items to restore. Their original parent folders must exist. Existing files and folders will never be overwritten. Items removed when the Recycle Bin was emptied may no longer be available."/>
+        <DataGrid x:Name="Entries" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="SelectionChanged" EnableRowVirtualization="True">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="150"/>
+                <DataGridTextColumn Header="Original location" Binding="{Binding OriginalPath}" Width="*" MinWidth="260">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding OriginalPath}"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/></Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Recorded" Binding="{Binding DateRecorded, StringFormat={}{0:yyyy-MM-dd HH:mm}, TargetNullValue=—}" Width="155"/>
+                <DataGridTextColumn Header="Recovery status" Binding="{Binding Status}" Width="245">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding Status}"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/></Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelAction" Content="Cancel" IsCancel="True" MinWidth="100" Margin="0,0,12,0"/>
+            <Button x:Name="RestoreAction" Content="Restore selected items" IsEnabled="False" Click="Restore_Click" MinWidth="180"/>
+        </StackPanel>
+    </Grid>
+</Window>

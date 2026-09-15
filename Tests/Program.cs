@@ -15,10 +15,16 @@ if (args.Length == 1 && args[0] == "--recycle-smoke")
     await RecycleSmokeTest.RunAsync();
     return;
 }
+if (args.Length == 2 && args[0] == "--elevated-recovery-smoke")
+{
+    await ElevatedRecoveryTest.RunAsync(args[1]);
+    return;
+}
 
 string root = Path.Combine(Path.GetTempPath(), "LumaSearch-tests-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
 int passed = 0;
+bool testsCompleted = false;
 void Check(bool condition, string name)
 {
     if (!condition) throw new InvalidOperationException("FAILED: " + name);
@@ -164,6 +170,8 @@ try
     Check(changedTypeRefused, "Explorer detects a stale item type");
     await AuditRegressionTests.RunAsync(root, Check);
     await BatchAndDateTests.RunAsync(root, Check);
+    await OperationSafetyTests.RunAsync(root, Check);
+    await ProtectedRecoveryTests.RunAsync(root, Check);
     Exception? uiFailure = null;
     string? previewPath = args.FirstOrDefault();
     var uiThread = new Thread(() =>
@@ -175,8 +183,10 @@ try
     uiThread.Start();
     if (!uiThread.Join(TimeSpan.FromSeconds(30))) throw new TimeoutException("WPF smoke test did not finish.");
     if (uiFailure is not null) throw new InvalidOperationException("WPF smoke test failed.", uiFailure);
+    using (var drain = new CancellationTokenSource(TimeSpan.FromSeconds(5))) await ReadOnlyWork.WaitForIdleAsync(drain.Token);
     Check(true, "WPF initialization, asynchronous search, selection and layout rendering");
     Console.WriteLine($"{passed} integration checks passed.");
+    testsCompleted = true;
 }
 finally
 {
@@ -186,7 +196,8 @@ finally
     if (!resolved.StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase) ||
         !Path.GetFileName(resolved).StartsWith("LumaSearch-tests-", StringComparison.Ordinal))
         throw new InvalidOperationException("Unexpected fixture cleanup path.");
-    if (Directory.Exists(resolved)) Directory.Delete(resolved, true);
+    try { if (Directory.Exists(resolved)) Directory.Delete(resolved, true); }
+    catch (Exception cleanupError) when (!testsCompleted) { Console.Error.WriteLine("Fixture cleanup also failed: " + cleanupError.Message); }
 }
 }
 catch (Exception ex)

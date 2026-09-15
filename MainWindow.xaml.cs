@@ -12,7 +12,7 @@ using Microsoft.Win32;
 
 namespace LumaSearch;
 
-public enum OperationState { Idle, Searching, PreparingDelete, Deleting, OpeningExplorer, Cancelling, Closing }
+public enum OperationState { Idle, Searching, PreparingDelete, Deleting, OpeningExplorer, Cancelling, Closing, LoadingRecovery, Restoring }
 
 public partial class MainWindow : Window
 {
@@ -57,7 +57,12 @@ public partial class MainWindow : Window
             if (!_closed && _state == OperationState.Idle && version == _operationId && message is not null)
                 StatusTextBlock.Text = message;
         }
-        catch (Exception ex) { Debug.WriteLine(ex); }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            if (!_closed && _state == OperationState.Idle && version == _operationId)
+                StatusTextBlock.Text = "Previous operations could not be fully checked. Review recovery items before another deletion.";
+        }
         finally { ReadOnlyWork.Observe(previous); }
     }
 
@@ -180,11 +185,12 @@ public partial class MainWindow : Window
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         if (_state is OperationState.Idle or OperationState.Closing) return;
+        bool restoring = _state == OperationState.Restoring;
         _state = OperationState.Cancelling;
         if (_deletionJob is not null)
         {
             _deletionJob.RequestCancel();
-            StatusTextBlock.Text = "Stopping deletion after the current filesystem operation. You may close this window; its outcome will be saved.";
+            StatusTextBlock.Text = $"Stopping {(restoring ? "restoration" : "deletion")} after the current filesystem operation. You may close this window; its outcome will be saved.";
         }
         else { _operationCancellation?.Cancel(); StatusTextBlock.Text = "Cancelling…"; }
         UpdateControls();
@@ -214,13 +220,22 @@ public partial class MainWindow : Window
                         mode == DeletionMode.RecycleBin ? "Send selected item to Recycle Bin?" : "Permanently delete selected item?",
                         MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes
                     : new BatchDeleteDialog(validated, selection.Length, mode) { Owner = this }.ShowDialog() == true;
-                if (!confirmed) return;
+                if (!confirmed)
+                {
+                    StatusTextBlock.Text = "Deletion cancelled; no changes made.";
+                    return;
+                }
                 _state = OperationState.Deleting;
                 UpdateControls();
                 StatusTextBlock.Text = mode == DeletionMode.RecycleBin ? $"Sending {plan.Length:N0} targets to the Recycle Bin…" : $"Permanently deleting {plan.Length:N0} targets…";
                 _deletionJob = await DeletionJob.StartAsync(plan, mode, cancel.Token);
                 if (_closed) { _deletionJob.RequestCancel(); return; }
                 outcome = await _deletionJob.WaitAsync();
+                if (outcome.Status == DeletionStatus.NotStarted)
+                {
+                    if (!_closed) StatusTextBlock.Text = outcome.Message;
+                    return;
+                }
                 var combined = validated.Unavailable.Concat(outcome.Items ?? []).ToArray();
                 if (outcome.Status == DeletionStatus.Unknown)
                 {
@@ -237,9 +252,10 @@ public partial class MainWindow : Window
             bool reconciled = await ReconcileAsync(results, id, cancel.Token);
             if (_closed) return;
             StatusTextBlock.Text = outcome.Message + (reconciled ? "" : " Refresh the search to confirm which items remain.");
-            if (outcome.Status is DeletionStatus.Failed or DeletionStatus.Unknown)
+            if (outcome.Status is DeletionStatus.Failed or DeletionStatus.Unknown or DeletionStatus.Pending ||
+                results.Any(item => item.Status is DeletionStatus.Failed or DeletionStatus.Unknown or DeletionStatus.Pending))
             {
-                string failures = string.Join("\n\n", results.Where(item => item.Status is DeletionStatus.Failed or DeletionStatus.Unknown)
+                string failures = string.Join("\n\n", results.Where(item => item.Status is DeletionStatus.Failed or DeletionStatus.Unknown or DeletionStatus.Pending)
                     .Take(10).Select(item => item.Item.FullPath + "\n" + item.Message));
                 MessageBox.Show(this, outcome.Message + (failures.Length == 0 ? "" : "\n\n" + failures),
                     "Operation did not complete", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -283,6 +299,49 @@ public partial class MainWindow : Window
         finally { ReadOnlyWork.Observe(work); }
     }
 
+    private async void RestoreDeleted_Click(object sender, RoutedEventArgs e)
+    {
+        if (_state != OperationState.Idle) return;
+        var (id, cancel) = BeginOperation(OperationState.LoadingRecovery);
+        StatusTextBlock.Text = "Loading recoverable items…";
+        var listing = ReadOnlyWork.RunAsync(() => new RecoveryStorage().List(), cancel.Token);
+        try
+        {
+            var entries = await listing.WaitAsync(cancel.Token);
+            if (_closed) return;
+            if (entries.Length == 0) { StatusTextBlock.Text = "No items are recorded for restoration."; return; }
+            var dialog = new RecoveryDialog(entries) { Owner = this };
+            if (dialog.ShowDialog() != true) { StatusTextBlock.Text = "Restoration cancelled; no changes made."; return; }
+            var selected = dialog.SelectedEntries;
+            _state = OperationState.Restoring;
+            UpdateControls();
+            StatusTextBlock.Text = $"Restoring {selected.Length:N0} items to their original locations…";
+            _deletionJob = await DeletionJob.StartAsync(selected.Select(item => item.Record.Original).ToArray(),
+                DeletionMode.RecycleBin, cancel.Token, recoveryRecords: selected.Select(item => item.RecordPath).ToArray());
+            if (_closed) { _deletionJob.RequestCancel(); return; }
+            var outcome = await _deletionJob.WaitAsync();
+            if (_closed) return;
+            StatusTextBlock.Text = outcome.Message + " Refresh the search to see restored items.";
+            if (outcome.Status is DeletionStatus.Failed or DeletionStatus.Unknown)
+            {
+                string details = string.Join("\n\n", (outcome.Items ?? []).Where(item => item.Status == DeletionStatus.Failed)
+                    .Take(10).Select(item => item.Item.FullPath + "\n" + item.Message));
+                MessageBox.Show(this, outcome.Message + "\n\n" + details, "Restoration did not complete", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (OperationCanceledException) { if (!_closed) StatusTextBlock.Text = "Restoration cancelled before a worker started."; }
+        catch (Exception ex)
+        {
+            if (!_closed) { StatusTextBlock.Text = "Restoration unavailable."; MessageBox.Show(this, ex.Message, "Cannot restore items", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        }
+        finally
+        {
+            ReadOnlyWork.Observe(listing, cancel);
+            _deletionJob?.Dispose(); _deletionJob = null;
+            EndOperation(id);
+        }
+    }
+
     private static ScrollViewer? FindScrollViewer(DependencyObject parent)
     {
         if (parent is ScrollViewer viewer) return viewer;
@@ -313,6 +372,7 @@ public partial class MainWindow : Window
         SearchOptionsPanel.IsEnabled = !busy;
         DeletionModeComboBox.IsEnabled = !busy;
         SearchButton.IsEnabled = !busy;
+        RestoreDeletedButton.IsEnabled = !busy;
         CancelButton.IsEnabled = busy && _state is not OperationState.Cancelling and not OperationState.Closing;
         var selectedItems = GetSelectedItems();
         ExplorerButton.IsEnabled = !busy && selectedItems.Length == 1;

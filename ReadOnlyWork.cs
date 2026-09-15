@@ -16,4 +16,10 @@ public static class ReadOnlyWork
         _ = task.ContinueWith(completed => { _ = completed.Exception; owner?.Dispose(); },
             CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
+    internal static async Task WaitForIdleAsync(CancellationToken token)
+    {
+        int acquired = 0;
+        try { for (; acquired < 2; acquired++) await Slots.WaitAsync(token); }
+        finally { if (acquired > 0) Slots.Release(acquired); }
+    }
 }

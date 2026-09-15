@@ -5,12 +5,15 @@ namespace LumaSearch;
 
 public static class RecycleBinService
 {
-    public static Task<DeletionOutcome> RecycleAsync(SearchResult item, CancellationToken token = default)
+    public static Task<DeletionOutcome> RecycleAsync(SearchResult item, CancellationToken token = default) =>
+        new RecoveryStorage().RecycleAsync(item, token);
+
+    internal static Task<DeletionOutcome> RecycleStagedAsync(SearchResult item, CancellationToken token, Action<string> recycled)
     {
         var completion = new TaskCompletionSource<DeletionOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try { completion.SetResult(Recycle(item, token)); }
+            try { completion.SetResult(Recycle(item, token, recycled)); }
             catch (Exception ex) { completion.SetException(ex); }
         }) { IsBackground = true, Name = "LumaSearch recycling" };
         thread.SetApartmentState(ApartmentState.STA);
@@ -18,7 +21,7 @@ public static class RecycleBinService
         return completion.Task;
     }
 
-    private static DeletionOutcome Recycle(SearchResult item, CancellationToken token)
+    private static DeletionOutcome Recycle(SearchResult item, CancellationToken token, Action<string> recycled)
     {
         token.ThrowIfCancellationRequested();
         var target = FileDeletionService.ValidateTarget(item);
@@ -55,7 +58,11 @@ public static class RecycleBinService
             if (sink.Failure < 0) Marshal.ThrowExceptionForHR(sink.Failure);
             if (aborted || !sink.Recycled)
                 throw new IOException("The item was not sent to the Recycle Bin. It may be locked or recycling may be unavailable for this location.");
-            return new(DeletionStatus.Recycled, "Sent to Recycle Bin: " + item.Name);
+            string warning = "";
+            try { recycled(sink.RecycledPath ?? throw new IOException("Windows did not provide the recovery location.")); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { warning = ". The recovery location update could not be saved; LumaSearch can locate this item using its recorded identity"; }
+            return new(DeletionStatus.Recycled, "Sent to Recycle Bin: " + item.Name + warning);
         }
         finally
         {
@@ -143,6 +150,7 @@ public sealed class RecycleProgressSink : IFileOperationProgressSink
     public bool UnconfirmedDeletion { get; private set; }
     public string? ValidationError { get; private set; }
     public bool Recycled { get; private set; }
+    public string? RecycledPath { get; private set; }
     public int Failure { get; private set; }
     public int PreDeleteItem(uint flags, IntPtr item)
     {
@@ -176,7 +184,14 @@ public sealed class RecycleProgressSink : IFileOperationProgressSink
         { UnconfirmedDeletion = true; Failure = unchecked((int)0x80004005); return Failure; }
         try
         {
-            if (_expected is null || (_rootPath is not null && SamePath(GetPath(item), _rootPath))) Recycled = true;
+            if (_expected is null) Recycled = true;
+            else if (_rootPath is not null && SamePath(GetPath(item), _rootPath))
+            {
+                string destination = GetPath(created);
+                FileIdentityService.EnsureSame(_expected, SearchResult.Capture(destination));
+                RecycledPath = destination;
+                Recycled = true;
+            }
             return 0;
         }
         catch (Exception ex) { ValidationError = ex.Message; return unchecked((int)0x80004004); }

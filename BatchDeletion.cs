@@ -87,24 +87,30 @@ public static class BatchDeletion
     }
 
     public static DeletionOutcome Summarize(int total, ItemDeletionOutcome[] completed, DeletionMode mode,
-        string? error = null)
+        string? error = null, bool restoring = false)
     {
         if (total < completed.Length || total < 1) throw new ArgumentOutOfRangeException(nameof(total));
-        int done = completed.Count(item => item.Status is DeletionStatus.Recycled or DeletionStatus.PermanentlyDeleted);
+        int done = completed.Count(item => item.Status is DeletionStatus.Recycled or DeletionStatus.PermanentlyDeleted or DeletionStatus.Restored);
         int missing = completed.Count(item => item.Status == DeletionStatus.AlreadyMissing);
         int failures = completed.Count(item => item.Status is DeletionStatus.Failed or DeletionStatus.Unknown);
         int interrupted = completed.Count(item => item.Status == DeletionStatus.Cancelled);
-        int notAttempted = total - completed.Length;
+        int pending = completed.Count(item => item.Status == DeletionStatus.Pending);
+        int notAttempted = total - completed.Length + completed.Count(item => item.Status == DeletionStatus.NotStarted);
         bool cancelled = interrupted > 0 || notAttempted > 0;
-        DeletionStatus status = error is not null ? DeletionStatus.Failed : cancelled ? DeletionStatus.Cancelled : failures > 0 ? DeletionStatus.Failed
+        DeletionStatus status = error is not null || failures > 0 ? DeletionStatus.Failed : pending > 0 ? DeletionStatus.Pending
+            : cancelled ? DeletionStatus.Cancelled
             : missing == total ? DeletionStatus.AlreadyMissing
+            : restoring ? DeletionStatus.Restored
             : mode == DeletionMode.RecycleBin ? DeletionStatus.Recycled : DeletionStatus.PermanentlyDeleted;
-        string verb = mode == DeletionMode.RecycleBin ? "recycled" : "permanently deleted";
-        var counts = new BatchCounts(done, missing, failures, interrupted, notAttempted);
-        string detail = error is not null ? " " + error : cancelled
-            ? " Cancelled; interrupted folders may be partly processed. Refresh the search." : "";
+        string verb = restoring ? "restored" : mode == DeletionMode.RecycleBin ? "recycled" : "permanently deleted";
+        var counts = new BatchCounts(done, missing, failures, interrupted, notAttempted, pending);
+        string detail = (error is not null ? " " + error : "") + (cancelled
+            ? " Cancelled; interrupted folders may be partly processed. Refresh the search." : "")
+            + (pending > 0 ? " Close open files and refresh the search to confirm removal; folders may be partly processed." : "");
+        if (!restoring && mode == DeletionMode.RecycleBin && (failures > 0 || interrupted > 0))
+            detail += " Items may be in protected recovery storage. Use Restore deleted items in LumaSearch.";
         return new(status, $"{done:N0} targets {verb}; {missing:N0} already missing; {failures:N0} failed/unconfirmed; "
-            + $"{interrupted:N0} cancelled/possibly partial; {notAttempted:N0} not attempted." + detail, completed, counts);
+            + $"{interrupted:N0} cancelled/possibly partial; {notAttempted:N0} not attempted; {pending:N0} awaiting removal confirmation." + detail, completed, counts);
     }
 
     public static SearchResult[] Reconcile(SearchResult[] results, IEnumerable<ItemDeletionOutcome> outcomes)
