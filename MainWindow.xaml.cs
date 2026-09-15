@@ -68,17 +68,24 @@ public partial class MainWindow : Window
 
     private NameMatchMode SelectedNameMatchMode => NameMatchComboBox.SelectedValue is NameMatchMode mode ? mode : NameMatchMode.Contains;
     private DeletionMode SelectedDeletionMode => DeletionModeComboBox.SelectedValue is DeletionMode mode ? mode : DeletionMode.RecycleBin;
+    private bool MatchCase => MatchCaseCheckBox?.IsChecked == true;
     private void NameMatchComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateNameHint();
+    private void MatchCase_Changed(object sender, RoutedEventArgs e) => UpdateNameHint();
     private void DeletionModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsInitialized) UpdateControls(); }
     private void UpdateNameHint()
     {
         if (NameHintTextBlock is null) return;
-        NameHintTextBlock.Text = SelectedNameMatchMode switch
+        string nameHint = SelectedNameMatchMode switch
         {
-            NameMatchMode.Exact => "Full name, including extension: report.txt. Ignores case. Leave blank for all names.",
-            NameMatchMode.Wildcard => "Use * for any text or ? for one character: *.txt, report-??.*. Leave blank for all names.",
-            _ => "Any part of the name: report finds Annual Report.pdf. Ignores case. Leave blank for all names."
+            NameMatchMode.Exact => "Full name, including extension: report.txt.",
+            NameMatchMode.Wildcard => "Use * for any text or ? for one character: *.txt, report-??.*.",
+            _ => "Any part of the name: Report finds Annual Report.pdf."
         };
+        string caseHint = MatchCase ? "Matches case" : "Ignores case";
+        NameHintTextBlock.Text = $"{nameHint} {caseHint}. Leave blank for all names.";
+        if (TextHintTextBlock is not null) TextHintTextBlock.Text = $"Optional · applies to files only · {caseHint.ToLowerInvariant()}";
+        if (TargetTextBox is not null)
+            TargetTextBox.ToolTip = $"Literal text, {(MatchCase ? "matching" : "ignoring")} case. Matches within a line. Supports UTF-8 and BOM-marked UTF-16/UTF-32.";
     }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
@@ -120,7 +127,7 @@ public partial class MainWindow : Window
             if (!files && !folders) throw new ArgumentException("Select Search Files, Search Folders, or both.");
             if (TargetTextBox.Text.Contains('\r') || TargetTextBox.Text.Contains('\n')) throw new ArgumentException("Search text must fit on a single line.");
             options = new(Path.GetFullPath(input), PatternTextBox.Text, TargetTextBox.Text,
-                files, folders, IncludeHiddenCheckBox.IsChecked == true, SelectedNameMatchMode);
+                files, folders, IncludeHiddenCheckBox.IsChecked == true, SelectedNameMatchMode, MatchCase: MatchCase);
         }
         catch (Exception ex) when (ex is ArgumentException || FileSearchService.IsFileSystemException(ex))
         { MessageBox.Show(this, ex.Message, "Cannot start search", MessageBoxButton.OK, MessageBoxImage.Warning); return; }

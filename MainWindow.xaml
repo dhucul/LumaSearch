@@ -86,13 +86,16 @@
                     <TextBox Grid.Column="1" x:Name="PatternTextBox" AutomationProperties.Name="File or folder name" MaxLength="1024"
                              ToolTip="{Binding Text, ElementName=NameHintTextBlock}" />
                 </Grid>
-                <TextBox Grid.Row="3" Grid.Column="2" x:Name="TargetTextBox" MaxLength="4096" AutomationProperties.Name="Text inside files" ToolTip="Literal text, ignoring case. Matches within a line. Supports UTF-8 and BOM-marked UTF-16/UTF-32." />
+                <TextBox Grid.Row="3" Grid.Column="2" x:Name="TargetTextBox" MaxLength="4096" AutomationProperties.Name="Text inside files" />
                 <TextBlock Grid.Row="4" x:Name="NameHintTextBlock" TextWrapping="Wrap" FontSize="11" Foreground="#66718A" Margin="0,4,0,10" />
-                <TextBlock Grid.Row="4" Grid.Column="2" Text="Optional · applies to files only · ignores case" FontSize="11" Foreground="#66718A" Margin="0,4,0,10" />
+                <TextBlock Grid.Row="4" Grid.Column="2" x:Name="TextHintTextBlock" TextWrapping="Wrap" FontSize="11" Foreground="#66718A" Margin="0,4,0,10" />
                 <StackPanel Grid.Row="5" Grid.ColumnSpan="3" Orientation="Horizontal">
                     <CheckBox x:Name="SearchFilesCheckBox" Content="Search Files" IsChecked="True" />
                     <CheckBox x:Name="SearchFoldersCheckBox" Content="Search Folders" IsChecked="True" />
                     <CheckBox x:Name="IncludeHiddenCheckBox" Content="Include Hidden Items" />
+                    <CheckBox x:Name="MatchCaseCheckBox" Content="Match case" IsChecked="False"
+                              Checked="MatchCase_Changed" Unchecked="MatchCase_Changed"
+                              ToolTip="Match uppercase and lowercase letters exactly in file/folder names and text inside files." />
                 </StackPanel>
             </Grid>
         </Border>

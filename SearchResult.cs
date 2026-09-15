@@ -14,7 +14,7 @@ public enum NameMatchMode { Contains, Exact, Wildcard }
 
 public sealed record SearchOptions(string StartingDirectory, string NamePattern,
     string TargetText, bool SearchFiles, bool SearchFolders, bool IncludeHidden,
-    NameMatchMode MatchMode = NameMatchMode.Wildcard, int MaxResults = 20_000);
+    NameMatchMode MatchMode = NameMatchMode.Wildcard, int MaxResults = 20_000, bool MatchCase = false);
 
 public sealed class ScanStatistics
 {

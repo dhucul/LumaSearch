@@ -29,6 +29,9 @@ internal static class WpfSmokeTest
         var deletionMode = (ComboBox)window.FindName("DeletionModeComboBox");
         var clearOutput = (Button)window.FindName("ClearOutputButton");
         var emptySavedItems = (Button)window.FindName("EmptySavedItemsButton");
+        var matchCase = (CheckBox)window.FindName("MatchCaseCheckBox");
+        var targetText = (TextBox)window.FindName("TargetTextBox");
+        if (matchCase.IsChecked != false) throw new InvalidOperationException("Match case must be unchecked by default.");
         if (!Equals(deletionMode.SelectedValue, DeletionMode.RecycleBin))
             throw new InvalidOperationException("Deletion did not default to the Recycle Bin.");
         path.Text = root;
@@ -44,6 +47,27 @@ internal static class WpfSmokeTest
         pattern.Text = "unicode";
         RunSearch();
         if (grid.Items.Count != 2) throw new InvalidOperationException("The contains-name UI search returned incorrect results.");
+        matchCase.IsChecked = true;
+        pattern.Text = "UNICODE";
+        RunSearch(expectedCount: 0);
+        if (!((TextBlock)window.FindName("NameHintTextBlock")).Text.Contains("Matches case")
+            || !((TextBlock)window.FindName("TextHintTextBlock")).Text.Contains("matches case")
+            || !targetText.ToolTip.ToString()!.Contains("matching case"))
+            throw new InvalidOperationException("Search hints did not reflect match case.");
+        matchCase.IsChecked = false;
+        RunSearch(expectedCount: 2);
+        matchCase.IsChecked = true;
+        pattern.Text = "unicode";
+        targetText.Text = "UTF16";
+        RunSearch(expectedCount: 1);
+        targetText.Text = "utf16";
+        RunSearch(expectedCount: 0);
+        matchCase.IsChecked = false;
+        RunSearch(expectedCount: 1);
+        if (!((TextBlock)window.FindName("TextHintTextBlock")).Text.Contains("ignores case"))
+            throw new InvalidOperationException("Search hints did not reset after disabling match case.");
+        targetText.Text = "";
+        RunSearch(expectedCount: 2);
         grid.SelectedIndex = 0;
         if (!explorer.IsEnabled || !explorerMenu.IsEnabled)
             throw new InvalidOperationException("Selection did not enable Explorer navigation.");
@@ -60,21 +84,25 @@ internal static class WpfSmokeTest
             throw new InvalidOperationException("Explorer navigation stayed enabled without a selection.");
         if (delete.IsEnabled) throw new InvalidOperationException("Clearing selection did not disable deletion.");
         grid.SelectedIndex = 0;
+        matchCase.IsChecked = true;
         clearOutput.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         if (grid.Items.Count != 0 || grid.SelectedItems.Count != 0 || delete.IsEnabled || explorer.IsEnabled ||
             ((TextBlock)window.FindName("CountTextBlock")).Text != "0 results" ||
             ((TextBlock)window.FindName("StatusTextBlock")).Text != "Output cleared." ||
-            path.Text != root || pattern.Text != "unicode" || !File.Exists(Path.Combine(root, "unicode.txt")))
+            path.Text != root || pattern.Text != "unicode" || matchCase.IsChecked != true || !File.Exists(Path.Combine(root, "unicode.txt")))
             throw new InvalidOperationException("Clear output did not reset the display while preserving search settings and files.");
         RunSearch(afterStart: () =>
         {
-            if (clearOutput.IsEnabled || emptySavedItems.IsEnabled)
+            if (clearOutput.IsEnabled || emptySavedItems.IsEnabled || matchCase.IsEnabled)
                 throw new InvalidOperationException("Output and recovery clearing must be disabled during a search.");
         });
         if (!clearOutput.IsEnabled || !emptySavedItems.IsEnabled)
             throw new InvalidOperationException("Output and recovery clearing did not become available after the search.");
+        if (!matchCase.IsEnabled || matchCase.IsChecked != true)
+            throw new InvalidOperationException("Match case was not retained and re-enabled after the search.");
+        matchCase.IsChecked = false;
 
-        void RunSearch(bool cancelImmediately = false, Action? afterStart = null)
+        void RunSearch(bool cancelImmediately = false, Action? afterStart = null, int? expectedCount = null)
         {
         search.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         afterStart?.Invoke();
@@ -91,7 +119,8 @@ internal static class WpfSmokeTest
         timer.Start();
         Dispatcher.PushFrame(frame);
         timer.Stop();
-        if (timedOut || (!cancelImmediately && grid.Items.Count == 0)) throw new InvalidOperationException("The UI search did not produce results.");
+        if (timedOut || (expectedCount is int count ? grid.Items.Count != count : !cancelImmediately && grid.Items.Count == 0))
+            throw new InvalidOperationException("The UI search did not produce the expected results.");
         }
 
         var content = (FrameworkElement)window.Content;

@@ -173,6 +173,7 @@ try
     await OperationSafetyTests.RunAsync(root, Check);
     await ProtectedRecoveryTests.RunAsync(root, Check);
     await EmptyRecoveryTests.RunAsync(root, Check);
+    await CaseMatchTests.RunAsync(root, Check);
     Exception? uiFailure = null;
     string? previewPath = args.FirstOrDefault();
     var uiThread = new Thread(() =>

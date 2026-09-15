@@ -9,7 +9,7 @@ namespace LumaSearch;
 
 public static class FileSearchService
 {
-    public static Regex CreateNameMatcher(string name, NameMatchMode mode = NameMatchMode.Wildcard)
+    public static Regex CreateNameMatcher(string name, NameMatchMode mode = NameMatchMode.Wildcard, bool matchCase = false)
     {
         if (name.Length > 1024)
             throw new ArgumentException("The name pattern must be 1,024 characters or fewer.");
@@ -23,9 +23,9 @@ public static class FileSearchService
         };
         // A blank field intentionally lists every name in all three modes.
         if (name.Length == 0) expression = ".*";
-        return new Regex(@"\A" + expression + @"\z",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline |
-            RegexOptions.NonBacktracking, TimeSpan.FromSeconds(2));
+        var flags = RegexOptions.CultureInvariant | RegexOptions.Singleline | RegexOptions.NonBacktracking;
+        if (!matchCase) flags |= RegexOptions.IgnoreCase;
+        return new Regex(@"\A" + expression + @"\z", flags, TimeSpan.FromSeconds(2));
     }
 
     public static Task ScanAsync(SearchOptions options, ChannelWriter<SearchResult> writer,
@@ -37,7 +37,7 @@ public static class FileSearchService
         var enumerators = new Stack<DirectoryCursor>();
         try
         {
-            var matcher = CreateNameMatcher(options.NamePattern, options.MatchMode);
+            var matcher = CreateNameMatcher(options.NamePattern, options.MatchMode, options.MatchCase);
             if (options.MaxResults is < 1 or > 100_000) throw new ArgumentException("Result limit must be between 1 and 100,000.");
             cancellationToken.ThrowIfCancellationRequested();
             var root = FileIdentityService.CaptureForSearch(options.StartingDirectory);
@@ -46,7 +46,7 @@ public static class FileSearchService
             // Keep every path component stable for the lifetime of the traversal.
             using var pinnedRoot = PinnedPath.Open(root, deleteAccess: false, requireIdentity: false);
             int resultCount = 0;
-            var textMatcher = string.IsNullOrEmpty(options.TargetText) ? null : new LineTextMatcher(options.TargetText);
+            var textMatcher = string.IsNullOrEmpty(options.TargetText) ? null : new LineTextMatcher(options.TargetText, options.MatchCase);
             // Explicitly selected starting directories are searched even when hidden.
             enumerators.Push(DirectoryCursor.Open(root.FullPath, root));
             while (enumerators.Count > 0)
@@ -175,12 +175,14 @@ public static class FileSearchService
     {
         private readonly char[] _pattern;
         private readonly int[] _prefix;
+        private readonly bool _matchCase;
 
-        public LineTextMatcher(string target)
+        public LineTextMatcher(string target, bool matchCase)
         {
             if (target.Contains('\r') || target.Contains('\n'))
                 throw new ArgumentException("Search text must fit on a single line.");
-            _pattern = target.Select(char.ToUpperInvariant).ToArray();
+            _matchCase = matchCase;
+            _pattern = target.Select(Normalize).ToArray();
             _prefix = new int[_pattern.Length];
             for (int i = 1, j = 0; i < _pattern.Length; i++)
             {
@@ -189,6 +191,8 @@ public static class FileSearchService
                 _prefix[i] = j;
             }
         }
+
+        private char Normalize(char value) => _matchCase ? value : char.ToUpperInvariant(value);
 
         public async Task<SearchResult?> MatchAsync(string path, CancellationToken cancellationToken, Action<SearchResult>? contentOpened)
         {
@@ -210,7 +214,7 @@ public static class FileSearchService
                 {
                     char value = buffer[i];
                     if (value is '\r' or '\n') { matched = 0; continue; }
-                    value = char.ToUpperInvariant(value);
+                    value = Normalize(value);
                     while (matched > 0 && value != _pattern[matched]) matched = _prefix[matched - 1];
                     if (value == _pattern[matched]) matched++;
                     if (matched == _pattern.Length) return result;
